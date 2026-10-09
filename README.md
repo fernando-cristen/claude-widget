@@ -1,6 +1,7 @@
 MEU CLAUDE — WIDGET PARA WINDOWS 11
 
-<img width="268" height="58" alt="image" src="https://github.com/user-attachments/assets/9a3c3eec-0f31-4d52-b0d4-ea4023675f28" />
+<img width="513" height="48" alt="image" src="https://github.com/user-attachments/assets/f621504e-8ff0-41ca-b04a-5a6c861e71b1" />
+
 
 ATIVAR O NOVO RADAR (UMA VEZ)
 1. Feche o widget antigo e extraia TODOS os arquivos deste pacote.
