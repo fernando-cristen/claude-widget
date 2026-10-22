@@ -11,12 +11,22 @@
  using System.Windows.Forms;
 
  public class SessionInfo {
-  public string Id = "", Cwd = "", State = "", Event = "", Tool = "", Updated = "";
-  public DateTimeOffset Time { get { DateTimeOffset t; return DateTimeOffset.TryParse(Updated, out t) ? t : DateTimeOffset.MinValue; } }
+  public string Id = "", Cwd = "", State = "", Event = "", Tool = "", Updated = "", TurnStarted = "", TurnEnded = "", ClaudeStarted = "";
+  public int Subagents, ClaudePid, WindowPid;
+  // Filled by RadarReader: process liveness and the status line record of the same session.
+  public bool Closed;
+  public string Model = "";
+  public double Context = -1, Cost = -1;
+  static DateTimeOffset? Parse(string value) { DateTimeOffset t; return DateTimeOffset.TryParse(value, out t) ? t : (DateTimeOffset?)null; }
+  public DateTimeOffset Time { get { return Parse(Updated) ?? DateTimeOffset.MinValue; } }
   public string Project { get { try { return new DirectoryInfo(Cwd).Name; } catch { return "Projeto"; } } }
+  public string Effective { get { return Closed && State != "ended" ? "closed" : State; } }
+  public bool Silent { get { return (State == "working" || State == "waiting" || State == "background") && DateTimeOffset.UtcNow-Time > TimeSpan.FromMinutes(10); } }
+  public bool Active { get { return !Closed && !Silent && (State == "working" || State == "waiting" || State == "background"); } }
   public string Label {
    get {
-    if ((State == "working" || State == "waiting" || State == "background") && DateTimeOffset.UtcNow-Time > TimeSpan.FromMinutes(10)) return "Sem evento recente";
+    if (Closed && State != "ended") return "Sessão fechada";
+    if (Silent) return "Sem evento recente";
     switch(State) {
      case "working": return "Trabalhando";
      case "waiting": return "Precisa de você";
@@ -29,19 +39,102 @@
     }
    }
   }
+  // How long the turn has run ("há 4min") or took ("em 3min").
+  public string Elapsed {
+   get {
+    if (Closed || Silent) return "";
+    DateTimeOffset? started = Parse(TurnStarted), ended = Parse(TurnEnded);
+    if (State == "working" && started.HasValue) return "há " + Span(DateTimeOffset.UtcNow-started.Value);
+    if (State == "waiting") return "há " + Span(DateTimeOffset.UtcNow-Time);
+    if ((State == "done" || State == "error" || State == "background") && started.HasValue && ended.HasValue && ended.Value >= started.Value) return "em " + Span(ended.Value-started.Value);
+    return "";
+   }
+  }
+  // Tool and subagents of the current turn: "Bash · 2 subagentes".
+  public string Extras {
+   get {
+    var parts = new List<string>();
+    if (!Closed && !Silent && (State == "working" || State == "waiting") && Tool.Length > 0) parts.Add(Tool);
+    if (!Closed && Subagents > 0) parts.Add(Subagents + (Subagents == 1 ? " subagente" : " subagentes"));
+    return String.Join(" · ", parts);
+   }
+  }
+  // "Trabalhando há 4min · Bash · 2 subagentes"
+  public string Activity {
+   get {
+    string text = Label, elapsed = Elapsed, extras = Extras;
+    if (elapsed.Length > 0) text += " " + elapsed;
+    if (extras.Length > 0) text += " · " + extras;
+    return text;
+   }
+  }
+  public string Usage {
+   get {
+    var parts = new List<string>();
+    if (Model.Length > 0) parts.Add(Model);
+    if (Context >= 0) parts.Add("contexto " + Math.Round(Context) + "%");
+    if (Cost >= 0) parts.Add("US$ " + Cost.ToString("0.00", CultureInfo.GetCultureInfo("pt-BR")));
+    return String.Join(" · ", parts);
+   }
+  }
+  public static string Span(TimeSpan value) {
+   if (value.TotalSeconds < 60) return Math.Max(0,(int)value.TotalSeconds) + "s";
+   if (value.TotalHours < 1) return (int)value.TotalMinutes + "min";
+   return (int)value.TotalHours + "h " + value.Minutes + "min";
+  }
  }
+ public class StatusRecord { public string Model = "", Updated = "", FiveReset = "", WeekReset = ""; public double Context = -1, Cost = -1, Five = -1, Week = -1; }
  public static class RadarReader {
+  static string Dir { get { return Path.Combine(Data.Folder,"radar"); } }
   public static List<SessionInfo> Read() {
    var result = new List<SessionInfo>();
-   string dir = Path.Combine(Data.Folder,"radar"); if (!Directory.Exists(dir)) return result;
+   string dir = Dir; if (!Directory.Exists(dir)) return result;
    foreach (var file in new DirectoryInfo(dir).GetFiles("*.json").OrderByDescending(f=>f.LastWriteTimeUtc).Take(300)) {
     try {
      if (file.Length > 32768) continue;
      var item = Data.Json().Deserialize<SessionInfo>(File.ReadAllText(file.FullName));
-     if (item != null && !String.IsNullOrWhiteSpace(item.Id) && !String.IsNullOrWhiteSpace(item.Cwd) && DateTimeOffset.UtcNow-item.Time < TimeSpan.FromHours(24)) result.Add(item);
+     if (item == null || String.IsNullOrWhiteSpace(item.Id) || String.IsNullOrWhiteSpace(item.Cwd) || DateTimeOffset.UtcNow-item.Time >= TimeSpan.FromHours(24)) continue;
+     item.Closed = item.State != "ended" && !Alive(item);
+     string status = Path.Combine(dir,"status",item.Id+".json");
+     if (File.Exists(status) && new FileInfo(status).Length < 8192) {
+      try { var s = Data.Json().Deserialize<StatusRecord>(File.ReadAllText(status)); if (s != null) { item.Model = s.Model ?? ""; item.Context = s.Context; item.Cost = s.Cost; } } catch { }
+     }
+     result.Add(item);
     } catch { }
    }
    return result.OrderByDescending(s=>s.Time).ToList();
+  }
+  // Most recent subscription limits seen by any session's status line, or null.
+  public static StatusRecord LatestLimits() {
+   string dir = Path.Combine(Dir,"status"); if (!Directory.Exists(dir)) return null;
+   foreach (var file in new DirectoryInfo(dir).GetFiles("*.json").OrderByDescending(f=>f.LastWriteTimeUtc).Take(20)) {
+    try { var s = Data.Json().Deserialize<StatusRecord>(File.ReadAllText(file.FullName)); if (s != null && (s.Five >= 0 || s.Week >= 0)) return s; } catch { }
+   }
+   return null;
+  }
+  // Ctrl+C or closing the terminal fires no SessionEnd; the recorded Claude process tells the truth.
+  internal static bool Alive(SessionInfo s) {
+   if (s.ClaudePid <= 0) return true;
+   DateTimeOffset expected; if (!DateTimeOffset.TryParse(s.ClaudeStarted, out expected)) return true;
+   try {
+    using (var p = Process.GetProcessById(s.ClaudePid)) {
+     if (p.HasExited) return false;
+     return Math.Abs((p.StartTime.ToUniversalTime()-expected.UtcDateTime).TotalSeconds) < 2;
+    }
+   } catch (ArgumentException) { return false; }
+   catch { return true; }
+  }
+  // Session files only matter for 24 hours; older ones and interrupted temporaries are removed.
+  public static void Cleanup() {
+   foreach (string folder in new string[] { Dir, Path.Combine(Dir,"status") }) {
+    if (!Directory.Exists(folder)) continue;
+    foreach (var file in new DirectoryInfo(folder).GetFiles()) {
+     try {
+      var age = DateTime.UtcNow-file.LastWriteTimeUtc;
+      if ((file.Extension == ".json" && age > TimeSpan.FromDays(7)) || (file.Extension == ".tmp" && age > TimeSpan.FromHours(1))) file.Delete();
+     } catch { }
+    }
+   }
   }
  }
  public class GitInfo {
@@ -137,20 +230,23 @@
  public sealed class RadarForm : Form {
   readonly ListView list=new ListView(); readonly TextBox details=new TextBox();
   readonly System.Windows.Forms.Timer clock=new System.Windows.Forms.Timer();
-  readonly Func<List<SessionInfo>> read; readonly Func<string> describe; readonly Action<string> select;
+  readonly Func<List<SessionInfo>> read; readonly Func<string> describe; readonly Action<string> select, focus;
   string selected=""; bool updating;
-  public RadarForm(Func<List<SessionInfo>> readSessions,Func<string> description,Action<string> selectSession) {
-   read=readSessions; describe=description; select=selectSession;
-   Text="Claude · projetos e sessões"; Size=new Size(780,510); MinimumSize=new Size(680,440);
+  public RadarForm(Func<List<SessionInfo>> readSessions,Func<string> description,Action<string> selectSession,Action<string> focusSession) {
+   read=readSessions; describe=description; select=selectSession; focus=focusSession;
+   Text="Claude · projetos e sessões"; Size=new Size(900,510); MinimumSize=new Size(760,440);
    StartPosition=FormStartPosition.CenterParent; Font=new Font("Segoe UI",9); AutoScaleMode=AutoScaleMode.Dpi;
    list.View=View.Details; list.FullRowSelect=true; list.MultiSelect=false; list.HideSelection=false;
-   list.Columns.Add("Projeto",170); list.Columns.Add("Último estado observado",205); list.Columns.Add("Evento",140); list.Columns.Add("Horário",95);
-   list.SetBounds(14,15,732,215); list.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(list);
+   list.Columns.Add("Projeto",150); list.Columns.Add("Último estado observado",270); list.Columns.Add("Modelo · contexto · custo",260); list.Columns.Add("Horário",80);
+   list.SetBounds(14,15,852,215); list.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(list);
    details.Multiline=true; details.ReadOnly=true; details.ScrollBars=ScrollBars.Vertical;
-   details.SetBounds(14,243,732,165); details.Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(details);
+   details.SetBounds(14,243,852,165); details.Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(details);
    var automatic=new Button { Text="Seguir sessão mais recente", Left=14,Top=421,Width=220,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Left }; Controls.Add(automatic);
    automatic.Click+=delegate { selected=""; select(""); RefreshList(); };
-   var close=new Button { Text="Fechar",Left=646,Top=421,Width=100,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Right }; Controls.Add(close); close.Click+=delegate { Close(); };
+   var terminal=new Button { Text="Ir para o terminal", Left=244,Top=421,Width=170,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Left }; Controls.Add(terminal);
+   terminal.Click+=delegate { if(list.SelectedItems.Count>0) focus((string)list.SelectedItems[0].Tag); };
+   list.DoubleClick+=delegate { if(list.SelectedItems.Count>0) focus((string)list.SelectedItems[0].Tag); };
+   var close=new Button { Text="Fechar",Left=766,Top=421,Width=100,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Right }; Controls.Add(close); close.Click+=delegate { Close(); };
    list.SelectedIndexChanged+=delegate { if(!updating && list.SelectedItems.Count>0) { selected=(string)list.SelectedItems[0].Tag; select(selected); details.Text=describe(); } };
    clock.Interval=2000; clock.Tick+=delegate { RefreshList(); }; Shown+=delegate { RefreshList(); clock.Start(); };
    FormClosed+=delegate { clock.Stop(); clock.Dispose(); };
@@ -158,7 +254,9 @@
   void RefreshList() {
    updating=true; list.BeginUpdate(); list.Items.Clear();
    foreach(var s in read()) {
-    var row=new ListViewItem(new string[]{s.Project,s.Label,s.Event,s.Time.ToLocalTime().ToString("HH:mm:ss")}); row.Tag=s.Id; row.ToolTipText=s.Cwd; list.Items.Add(row);
+    var row=new ListViewItem(new string[]{s.Project,s.Activity,s.Usage,s.Time.ToLocalTime().ToString("HH:mm:ss")}); row.Tag=s.Id; row.ToolTipText=s.Cwd; list.Items.Add(row);
+    if(s.Effective=="waiting" && !s.Silent) row.ForeColor=Color.FromArgb(176,110,0);
+    else if(s.Closed||s.Silent||s.State=="ended") row.ForeColor=SystemColors.GrayText;
     if(s.Id==selected) row.Selected=true;
    }
    list.EndUpdate(); updating=false; details.Text=describe();

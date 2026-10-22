@@ -1,17 +1,38 @@
 ﻿MEU CLAUDE — WIDGET PARA WINDOWS 11
-Versão 2.0.1 — correção da gravação PowerShell • Criado para esta conversa • Código-fonte incluído
+Versão 3.0 • Código-fonte incluído
 
-CORREÇÃO 2.0.1
-Corrigida a chamada File.Replace no ativador e no receptor de eventos.
-A configuração agora é substituída com um caminho real de backup; os eventos
-usam NullString para passar o valor nulo corretamente ao .NET.
-Se a ativação anterior falhou: feche o widget, substitua TODOS os arquivos,
-rode Ativar-Radar.cmd novamente e reabra o Claude Code. Não apague seu
-settings.json, as credenciais nem as preferências do widget.
-Os testes isolados verificam gravações repetidas, backups e caminhos com espaços.
-Esta correção foi revisada estaticamente; não executada no Windows aqui.
+NOVIDADES DA 3.0
+• Radar sem atraso: os hooks rodam em segundo plano (async). Antes, cada
+  ferramenta usada pelo Claude esperava ~0,7 s pelo radar; agora, nada.
+• Tempo do turno: "Trabalhando há 4min · Bash", "Resposta concluída em 3min".
+• Subagentes: "· 2 subagentes" enquanto estiverem rodando.
+• Sessão fechada de verdade: o radar confere se o processo do Claude Code
+  ainda existe. Ctrl+C ou fechar o terminal passam a aparecer como
+  "Sessão fechada", mesmo sem evento de encerramento.
+• Selos na faixa: bolinhas com o número de OUTRAS sessões ativas
+  (âmbar = precisam de você, laranja = trabalhando).
+• Ir para o terminal: clique no aviso do Windows, use o menu
+  "Ir para o terminal da sessão" ou dê duplo clique na lista de sessões.
+• Modelo, contexto e custo por sessão, via barra de status do Claude Code.
+• Ícone da bandeja mostra o % da sessão de 5h, com as cores da faixa.
+• Avisos de uso: ao passar de 80% e 95%, e quando um limite bem usado renova.
+• Ritmo e previsão: "No ritmo atual, chega a 100% às 15:40". Na faixa, o
+  texto vira "esgota 15:40" (vermelho) se for acabar antes de renovar.
+  O painel grande mostra um minigráfico do uso recente.
+• "Iniciar com o Windows" direto no menu.
+• Abertura mais rápida: o código compilado fica guardado e só é recompilado
+  quando Widget.cs ou Radar.cs mudam.
+• Limpeza automática dos registros de sessão com mais de 7 dias.
 
-ATIVAR O NOVO RADAR (UMA VEZ)
+ATUALIZAR DA 2.x PARA A 3.0
+1. Feche o widget pelo × ou pelo menu Sair.
+2. Substitua TODOS os arquivos da pasta pelos novos.
+3. Rode Ativar-Radar.cmd de novo (necessário: os hooks mudaram para
+   segundo plano e ganharam eventos de subagentes e a barra de status).
+4. Reabra as sessões do Claude Code e abra Abrir-Widget.cmd.
+Login, posição e preferências continuam salvos.
+
+ATIVAR O RADAR (UMA VEZ)
 1. Feche o widget antigo e extraia TODOS os arquivos deste pacote.
 2. Abra Ativar-Radar.cmd, sem executar como administrador.
 3. Reabra suas sessões do Claude Code no Windows e envie uma mensagem.
@@ -24,14 +45,23 @@ Se você usa CLAUDE_CONFIG_DIR, ative a integração no mesmo ambiente/pasta
 de configuração do Claude. Políticas que desativam hooks são respeitadas.
 Não requer instalar extensão, Python, Node ou outro aplicativo.
 
+BARRA DE STATUS
+Se você ainda não tem uma barra de status no Claude Code, a ativação instala
+uma que mostra no terminal: modelo | contexto 42% | US$ 1,23. Os mesmos
+dados aparecem no widget. Se você JÁ tem uma barra de status própria, ela é
+mantida intacta; nesse caso modelo, contexto e custo não aparecem no widget.
+O custo é a estimativa do próprio Claude Code a preço de tabela.
+Remover-Radar.cmd tira a barra de status apenas se for a do widget.
+
 O QUE APARECE
-• Percentuais de uso existentes, com a política de atualização de 1 minuto.
-• Nome do projeto e último estado observado do Claude Code.
+• Percentuais de uso, com atualização a cada 1 minuto.
+• Nome do projeto, último estado observado e tempo do turno.
 • Arquivos alterados e linhas adicionadas/removidas no Git.
+• Contexto usado da sessão (quando a barra de status do widget está ativa).
 • Clique no nome do projeto para abrir a lista de sessões e escolher uma.
-• “Seguir sessão mais recente” volta à seleção automática.
+• "Seguir sessão mais recente" volta à seleção automática.
 • No painel grande, clique no cartão de projeto para abrir os detalhes.
-• Menu permite desligar avisos de conclusão e pedido de atenção.
+• O menu permite desligar cada tipo de aviso.
 
 CADÊNCIAS INDEPENDENTES
 Uso da assinatura: a cada minuto, respeitando Retry-After do Claude.
@@ -45,15 +75,26 @@ Precisa de você: pedido de permissão, AskUserQuestion ou notificação de entr
 Resposta concluída: evento Stop. Não significa que a tarefa passou em testes.
 Trabalho em segundo plano: Stop com tarefas de background ainda registradas.
 Erro no turno: StopFailure. Sessão encerrada: SessionEnd.
-Após 10 minutos sem evento em estados ativos, mostra “Sem evento recente”.
+Sessão fechada: o processo do Claude Code daquela sessão não existe mais.
+Após 10 minutos sem evento em estados ativos, mostra "Sem evento recente".
 O painel lista sessões com evento nas últimas 24 horas (máximo 300).
-Interromper com Ctrl+C ou matar o terminal pode não gerar evento de parada.
-Por isso o radar mostra o último estado OBSERVADO e o horário do evento,
-não uma garantia de que o processo continua vivo. Hooks de outros plugins
-podem prolongar um turno depois de Stop; a próxima atividade atualiza o estado.
-Subagentes não substituem o estado da sessão principal nesta versão.
+Como os hooks rodam em segundo plano, o estado pode chegar alguns décimos
+de segundo depois do acontecimento. Eventos fora de ordem são descartados.
+A detecção do processo e do terminal acontece no primeiro evento de cada
+sessão. Sessões abertas antes de ativar a 3.0 só ganham isso no próximo
+evento. Se o Claude Code roda dentro do VS Code, "Ir para o terminal" traz a
+janela do VS Code; no Windows Terminal, traz a janela (não troca a aba).
+Hooks de outros plugins podem prolongar um turno depois de Stop; a próxima
+atividade atualiza o estado.
 Notificações breves entre duas leituras podem não aparecer no radar.
 Avisos usam notificações do Windows; Não Perturbe pode ocultá-los.
+
+RITMO E PREVISÃO
+O widget guarda localmente um histórico dos percentuais (um ponto quando o
+valor muda ou a cada 10 minutos, até 8 dias) em history.json.
+5h: o ritmo é medido na última hora; 7d: nas últimas 24 horas.
+É uma projeção linear simples: se você parar de usar, ela não se cumpre.
+Com pouco histórico (logo após abrir), aparece "Ritmo: sem aumento recente".
 
 GIT: O QUE ESTÁ SENDO CONTADO
 Exige Git para Windows já disponível no PATH. Sem Git, o radar funciona,
@@ -71,27 +112,26 @@ Os nomes de arquivos, diffs e conteúdo de conversas não são enviados a ningu�
 
 DESATIVAR / DADOS LOCAIS
 Execute Remover-Radar.cmd e reabra o Claude Code. Só os hooks deste radar
-são removidos; os demais permanecem. É criado um backup da configuração.
-O script do hook fica em %LOCALAPPDATA%\MeuClaudeWidget\RadarHook.ps1.
-Os eventos ficam na subpasta radar. Contêm identificador derivado da sessão,
-pasta do projeto, estado, evento, nome da ferramenta e horário. Não gravam
-prompts, respostas, comandos executados, entradas/saídas de ferramentas,
-transcrições nem tokens. Os dados só são lidos localmente.
-Para apagar o histórico, com o widget fechado, apague apenas a subpasta radar.
+(e a barra de status, se for a do widget) são removidos; os demais
+permanecem. É criado um backup da configuração. Os scripts copiados para
+%LOCALAPPDATA%\MeuClaudeWidget também são apagados.
+Os eventos ficam na subpasta radar; modelo/contexto/custo em radar\status.
+Contêm identificador derivado da sessão, pasta do projeto, estado, evento,
+nome da ferramenta, horários, identificadores de subagentes e o número dos
+processos do Claude Code e do terminal. Não gravam prompts, respostas,
+comandos executados, entradas/saídas de ferramentas, transcrições nem tokens.
+Os dados só são lidos localmente. Registros com mais de 7 dias são apagados.
+Para apagar o histórico, com o widget fechado, apague a subpasta radar e o
+arquivo history.json.
 Esta integração é para Claude Code NATIVO DO WINDOWS; não inclui WSL/SSH.
 
-ATUALIZAR A VERSÃO QUE JÁ FUNCIONA
-1. Feche o widget antigo pelo × ou pelo menu Sair junto ao relógio.
-2. Extraia este ZIP e substitua os arquivos da pasta anterior.
-3. Abra Abrir-Widget.cmd novamente.
-O login já salvo em LocalAppData é reaproveitado. Não apague essa pasta.
-O modo de exibição e a posição que você salvou são reaproveitados.
-Se aparecer “já está aberto”, o widget antigo ainda precisa ser fechado.
-
-VISUAL COMPACTO, INSPIRADO NO PRINT
-• Faixa escura de 502 × 40 pixels em escala 100%, incluindo o radar.
+VISUAL COMPACTO
+• Faixa escura de 540 × 40 pixels em escala 100%, incluindo o radar.
 • 5h em âmbar: uso da sessão. 7d em azul: uso da semana.
-• Tempo de renovação logo abaixo; dados antigos ficam identificados.
+• Tempo de renovação logo abaixo, ou "esgota HH:mm" se o ritmo atual acabar
+  antes da renovação; dados antigos ficam identificados.
+• Lado direito: projeto · estado; abaixo, tempo · ferramenta · subagentes ·
+  contexto · Git. Bolinhas numeradas = outras sessões ativas.
 • Posicionamento inicial perto da área do relógio, sobre a barra de tarefas.
 • Arraste a faixa para ajustar o encaixe. A posição fica salva.
 • Botão direito ou os três pontinhos abrem as opções.
@@ -99,18 +139,18 @@ VISUAL COMPACTO, INSPIRADO NO PRINT
 • No painel grande, clique em Compactar (canto inferior direito) para voltar.
 • Duplo clique no título CLAUDE também alterna entre os dois modos.
 • Passe o mouse para ver os detalhes e o horário da última leitura.
-• Clique na área do projeto para selecionar outra sessão.
 • Bolinha verde: conectado. Âmbar: sem dados ou leitura antiga.
-• Menu “Alinhar perto do relógio”: reposiciona a faixa automaticamente.
-• Menu “Modo compacto”: alterna entre a faixa e o painel grande.
-• Menu “Sair”: fecha o widget.
+• Menu "Alinhar perto do relógio": reposiciona a faixa automaticamente.
+• Menu "Sair": fecha o widget.
 
+A faixa ficou 38 px mais larga que na 2.x. Se a posição salva não couber
+mais na tela, ela volta a se alinhar perto do relógio sozinha.
 É uma sobreposição sobre a barra, sem modificar o Explorer. Não reserva
 espaço entre os ícones: se algum ficar por baixo, arraste a faixa para um
 espaço livre. A posição automática varia com os ícones e a escala de tela.
 Com a barra do Windows oculta automaticamente, o widget continua visível.
 A opção de alinhamento automático usa a tela principal; você pode arrastar
-para outra tela. Mantenha “por cima das outras janelas” ativado para a faixa.
+para outra tela. Mantenha "por cima das outras janelas" ativado para a faixa.
 
 COMEÇAR DO ZERO
 1. Extraia a pasta inteira do ZIP para uma pasta sua.
@@ -121,7 +161,8 @@ Não requer instalar Python, Node, extensão ou aplicativo de terceiros.
 Usa Windows PowerShell 5.1, Windows Forms e .NET Framework do Windows 11.
 O resumo de mudanças usa o Git para Windows, se já instalado.
 Não execute como administrador. Não abra os arquivos de dentro do ZIP.
-Na primeira abertura, a compilação em memória pode demorar alguns segundos.
+Na primeira abertura (ou depois de atualizar), a compilação pode levar alguns
+segundos. Nas seguintes, o widget usa a versão já compilada.
 
 OPÇÃO A — CLAUDE NO NAVEGADOR OU APP
 Mesmo que você use o app desktop, entre na mesma conta pelo navegador:
@@ -156,7 +197,6 @@ USAR O WIDGET
 • Exibe sessão de 5h, semana geral e limites por modelo quando retornados.
 • A posição é salva; se o monitor sumir, volta à tela principal ao reabrir.
 • Atualização automática: um ciclo de consulta a cada 60 segundos.
-• A configuração antiga de intervalo é ajustada para 60 segundos ao abrir.
 • Atualizar consulta quando o intervalo terminou; respeita pausas do servidor.
 • Configurar permite mudar a conexão e a opção sempre por cima.
 • Clique no status para ver uma dica temporária, sem janela bloqueante.
@@ -165,14 +205,15 @@ USAR O WIDGET
 • A janela não ocupa um botão na barra de tarefas.
 • Uma segunda abertura avisa que o widget já está funcionando.
 
-ABRIR JUNTO COM O WINDOWS (OPCIONAL)
-1. Crie um atalho de Abrir-Widget.cmd.
-2. Pressione Win+R, digite shell:startup e confirme.
-3. Coloque somente o atalho nessa pasta. Remova-o para desativar.
-Não mude de lugar a pasta do widget depois de criar o atalho.
+ABRIR JUNTO COM O WINDOWS
+Marque "Iniciar com o Windows" no menu (botão direito na faixa). O widget
+cria um atalho na pasta de inicialização do seu usuário; desmarque para
+removê-lo. Não mude a pasta do widget de lugar depois de marcar; se mudar,
+desmarque e marque de novo.
 
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs e Radar.cs. Iniciar.ps1 compila-os em memória.
+Código próprio em Widget.cs e Radar.cs. Iniciar.ps1 compila-os e guarda o
+resultado em %LOCALAPPDATA%\MeuClaudeWidget\bin.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.
 Não baixa pacotes, não instala serviços, não altera o registro e não envia
 telemetria. Usa requisições GET HTTPS para dados de uso, sem gerar mensagens.
@@ -190,13 +231,9 @@ No modo Claude Code, o widget não guarda cópia do token no seu config.json.
 Os lançadores usam ExecutionPolicy Bypass só no processo iniciado, sem
 alterar permanentemente a política do Windows. Políticas corporativas
 podem impedir a execução; não é necessário desativar proteções do sistema.
+"Ir para o terminal" apenas traz para frente uma janela que já existe.
 
 LIMITAÇÕES REAIS
-O usuário confirmou que a conexão das versões anteriores funcionou.
-A versão 2.0 adiciona radar e Git. Os comandos Git foram verificados em
-repositório temporário (staged, unstaged, renome, arquivo novo e sem commit).
-C#, interface WinForms e hooks PowerShell não puderam ser executados neste
-ambiente Linux. Incluí testes locais para compilação e integração isolada.
 Não é um aplicativo oficial Anthropic. Os endpoints de uso são internos,
 podem mudar e podem recusar chamadas fora do site/app, inclusive com 403
 ou 429. Um cookie válido não garante que o acesso seja aceito.
@@ -207,44 +244,45 @@ que o próprio Claude tiver para atualizar suas métricas. Não há push.
 Percentuais são os retornados pelo serviço; não são estimados por tokens.
 Dados ausentes aparecem como —, nunca como 0%. Dados antigos ficam cinza,
 com aviso e horário da última leitura. O fim do prazo não zera o uso local.
-Não há mais espera local de 5 minutos nem aumento progressivo por falhas.
 Sem um prazo do servidor, inclusive após 429, tenta novamente no próximo
 ciclo de 60 segundos. O tempo gasto na consulta conta nesse minuto.
 Se o servidor enviar Retry-After, esse prazo é respeitado. Uma recusa 429
 não pode ser removida pelo widget: nesse período não há percentual novo.
 Nenhuma janela de aviso de conexão é aberta; os detalhes ficam na dica.
-Os últimos valores continuam marcados como antigos até uma leitura válida.
 Não há requisições paralelas: consultas em andamento terminam primeiro.
-O widget acompanha franquia de assinatura. Não mede gastos de API,
-compras de créditos nem tamanho da janela de contexto.
+O widget acompanha franquia de assinatura. Não mede gastos de API nem
+compras de créditos.
 Uma janela sempre por cima não se sobrepõe à tela de bloqueio, UAC nem a
 todos os jogos em tela cheia exclusiva.
 
 TESTE LOCAL OPCIONAL
 Abra Testar-Widget.cmd. Ele compila o mesmo código e verifica tratamento
 de zero, valores ausentes, limites por modelo, datas, respostas inválidas,
-valores numéricos, proteção DPAPI e interpretação de dados Git. Não lê a conta nem faz requisições.
-Testar-Radar.cmd verifica os hooks e a instalação/remoção em pasta
-temporária, sem tocar na sua configuração real do Claude.
+valores numéricos, proteção DPAPI, dados Git, cálculo do ritmo de uso,
+texto da atividade das sessões e detecção de sessão fechada.
+Não lê a conta nem faz requisições.
+Testar-Radar.cmd verifica hooks, barra de status e instalação/remoção em
+pasta temporária, sem tocar na sua configuração real do Claude.
 Os testes não validam conexão real, aparência ou comportamento de DPI.
 Em caso de erro ao abrir, copie a mensagem da janela (sem suas chaves).
 
 REMOVER
-Execute Remover-Radar.cmd primeiro. Feche o widget. Apague a pasta extraída e, se existir, o atalho de inicialização.
-Apague %LOCALAPPDATA%\MeuClaudeWidget para remover as preferências e a
-chave protegida. Desconectar também remove a chave da configuração, mas
-não revoga a sessão no Claude. Encerrar sessões é feito na própria conta.
+Execute Remover-Radar.cmd primeiro. Desmarque "Iniciar com o Windows".
+Feche o widget. Apague a pasta extraída.
+Apague %LOCALAPPDATA%\MeuClaudeWidget para remover as preferências, o
+histórico e a chave protegida. Desconectar também remove a chave da
+configuração, mas não revoga a sessão no Claude. Encerrar sessões é feito
+na própria conta.
 
 ARQUIVOS
-Abrir-Widget.cmd   — iniciar com dois cliques
-Iniciar.ps1        — carregador usando componentes do Windows
-Widget.cs          — fonte completo em C#
-Testar-Widget.cmd  — testes locais opcionais
-LEIA-ME.txt        — este guia
-
-NOVOS ARQUIVOS
-Radar.cs — sessões, leitura Git e painel de detalhes
-RadarHook.ps1 — receptor de eventos locais
-Integracao-Radar.ps1 — ativação/remoção com backup
+Abrir-Widget.cmd      — iniciar com dois cliques
+Iniciar.ps1           — carregador (compila e guarda o widget)
+Widget.cs             — fonte do widget em C#
+Radar.cs              — sessões, leitura Git e painel de detalhes
+RadarHook.ps1         — receptor de eventos dos hooks
+StatusLine.ps1        — barra de status (modelo, contexto, custo)
+Integracao-Radar.ps1  — ativação/remoção com backup
 Ativar-Radar.cmd / Remover-Radar.cmd — atalhos da integração
-Testar-Radar.cmd / Testar-Radar.ps1 — testes em ambiente isolado
+Testar-Widget.cmd     — testes locais do widget
+Testar-Radar.cmd / Testar-Radar.ps1 — testes da integração em pasta isolada
+LEIA-ME.txt           — este guia

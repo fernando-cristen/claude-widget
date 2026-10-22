@@ -7,8 +7,10 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -26,6 +28,7 @@ namespace MeuClaudeWidget {
   public bool OnTop = true;
   public bool Compact = true;
   public bool RadarAlerts = true;
+  public bool UsageAlerts = true;
   public string SelectedSession = "";
   public int CompactX = -10000, CompactY = -10000;
  }
@@ -95,6 +98,73 @@ namespace MeuClaudeWidget {
    if (left.TotalSeconds <= 0) return "Prazo passou · aguardando nova consulta";
    string span = left.TotalDays >= 1 ? ((int)left.TotalDays) + "d " + left.Hours + "h" : left.TotalHours >= 1 ? ((int)left.TotalHours) + "h " + left.Minutes + "min" : Math.Max(1, (int)Math.Ceiling(left.TotalMinutes)) + "min";
    return "Renova em " + span + " · " + b.Reset.Value.ToLocalTime().ToString("dd/MM HH:mm");
+  }
+  public static string Percent(double value) { return value.ToString("0.#",CultureInfo.GetCultureInfo("pt-BR"))+"%"; }
+ }
+ public class Reading { public long T; public double P5 = -1, P7 = -1; }
+ // Local usage history (one point per change or every 10 minutes, 8 days) used to estimate the pace.
+ public static class Pace {
+  public static readonly string HistoryPath = Path.Combine(Data.Folder, "history.json");
+  public static List<Reading> Load() {
+   try { var list = Data.Json().Deserialize<List<Reading>>(File.ReadAllText(HistoryPath)); if (list != null) return list.OrderBy(r=>r.T).ToList(); } catch { }
+   return new List<Reading>();
+  }
+  public static void Save(List<Reading> history) {
+   Directory.CreateDirectory(Data.Folder);
+   string temp = HistoryPath + ".tmp";
+   File.WriteAllText(temp, Data.Json().Serialize(history), new UTF8Encoding(false));
+   if (File.Exists(HistoryPath)) File.Replace(temp, HistoryPath, null); else File.Move(temp, HistoryPath);
+  }
+  static double Value(List<Bucket> b, int i) { return b.Count > i && b[i].Percent.HasValue ? b[i].Percent.Value : -1; }
+  static double Value(Reading r, int index) { return index == 0 ? r.P5 : r.P7; }
+  public static bool Add(List<Reading> history, List<Bucket> buckets, DateTimeOffset now) {
+   var r = new Reading { T = now.ToUnixTimeSeconds(), P5 = Value(buckets,0), P7 = Value(buckets,1) };
+   if (r.P5 < 0 && r.P7 < 0) return false;
+   var last = history.Count > 0 ? history[history.Count-1] : null;
+   if (last != null && last.P5 == r.P5 && last.P7 == r.P7 && r.T-last.T < 600) return false;
+   history.Add(r);
+   long oldest = r.T-8*86400; history.RemoveAll(x=>x.T < oldest);
+   if (history.Count > 4000) history.RemoveRange(0, history.Count-4000);
+   return true;
+  }
+  public static List<KeyValuePair<long,double>> Points(List<Reading> history, int index, TimeSpan span, DateTimeOffset now) {
+   long from = (now-span).ToUnixTimeSeconds();
+   return history.Where(r=>r.T >= from && Value(r,index) >= 0).Select(r=>new KeyValuePair<long,double>(r.T,Value(r,index))).ToList();
+  }
+  // Time to reach 100% at the pace of the last hour (5h) or day (7d); null when flat or not enough data.
+  public static DateTimeOffset? Exhaustion(List<Reading> history, int index, Bucket b, DateTimeOffset now) {
+   if (b == null || !b.Percent.HasValue) return null;
+   double p = b.Percent.Value; if (p >= 100) return now;
+   TimeSpan window = index == 0 ? TimeSpan.FromHours(5) : TimeSpan.FromDays(7);
+   TimeSpan look = index == 0 ? TimeSpan.FromHours(1) : TimeSpan.FromHours(24);
+   TimeSpan least = index == 0 ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(2);
+   DateTimeOffset from = now-look;
+   if (b.Reset.HasValue && b.Reset.Value-window > from && b.Reset.Value-window < now) from = b.Reset.Value-window;
+   Reading first = null;
+   foreach (var r in history) {
+    double v = Value(r,index); if (v < 0 || DateTimeOffset.FromUnixTimeSeconds(r.T) < from) continue;
+    if (v > p) { first = null; continue; } // higher than now: belongs to a window that has since reset
+    if (first == null) first = r;
+   }
+   if (first == null) return null;
+   double hours = (now-DateTimeOffset.FromUnixTimeSeconds(first.T)).TotalHours, gained = p-Value(first,index);
+   if (hours < least.TotalHours || gained <= 0) return null;
+   return now.AddHours((100-p)/(gained/hours));
+  }
+  public static bool RunsOut(List<Reading> history, int index, Bucket b, DateTimeOffset now, out DateTimeOffset when) {
+   var eta = Exhaustion(history,index,b,now); when = eta ?? now;
+   return eta.HasValue && b.Percent.Value < 100 && (!b.Reset.HasValue || eta.Value < b.Reset.Value);
+  }
+  public static string Describe(List<Reading> history, int index, Bucket b, DateTimeOffset now) {
+   if (b == null || !b.Percent.HasValue) return "";
+   if (b.Percent.Value >= 100) return "Limite atingido";
+   DateTimeOffset when;
+   if (RunsOut(history,index,b,now,out when)) return "No ritmo atual, chega a 100% " + When(when);
+   return Exhaustion(history,index,b,now).HasValue ? "No ritmo atual, não esgota antes de renovar" : "Ritmo: sem aumento recente";
+  }
+  public static string When(DateTimeOffset t) {
+   DateTime local = t.LocalDateTime;
+   return local.Date == DateTime.Now.Date ? "às " + local.ToString("HH:mm") : "em " + local.ToString("dd/MM HH:mm");
   }
  }
  public sealed class Api : IDisposable {
@@ -171,7 +241,7 @@ namespace MeuClaudeWidget {
       Guid id;
       if (org.Text.Trim().Length > 0 && !Guid.TryParse(org.Text.Trim(), out id)) { MessageBox.Show(this,"O ID da organização deve ser um UUID, ou deixe em branco."); return; }
      }
-     Value = new Settings { Mode = mode.SelectedIndex == 0 ? "browser" : "code", ProtectedSession = mode.SelectedIndex == 0 ? session : "", Organization = org.Text.Trim(), Interval = 60, OnTop = top.Checked, X = current.X, Y = current.Y, Compact = current.Compact, CompactX = current.CompactX, CompactY = current.CompactY, RadarAlerts = current.RadarAlerts, SelectedSession = current.SelectedSession };
+     Value = new Settings { Mode = mode.SelectedIndex == 0 ? "browser" : "code", ProtectedSession = mode.SelectedIndex == 0 ? session : "", Organization = org.Text.Trim(), Interval = 60, OnTop = top.Checked, X = current.X, Y = current.Y, Compact = current.Compact, CompactX = current.CompactX, CompactY = current.CompactY, RadarAlerts = current.RadarAlerts, UsageAlerts = current.UsageAlerts, SelectedSession = current.SelectedSession };
      Data.Save(Value); key.Clear(); DialogResult = DialogResult.OK; Close();
     } catch { MessageBox.Show(this,"Não foi possível salvar a configuração com proteção do Windows."); }
    };
@@ -185,6 +255,11 @@ namespace MeuClaudeWidget {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GetWindowRect(IntPtr handle, out Rect rect);
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool SetWindowPos(IntPtr handle, IntPtr after, int x, int y, int width, int height, uint flags);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool SetForegroundWindow(IntPtr handle);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool ShowWindow(IntPtr handle, int command);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsIconic(IntPtr handle);
+  [DllImport("user32.dll")] internal static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool DestroyIcon(IntPtr handle);
  }
  public class Widget : Form {
   Settings settings; readonly Api api = new Api(); readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -202,10 +277,20 @@ namespace MeuClaudeWidget {
   DateTimeOffset nextRadar = DateTimeOffset.MinValue, nextGit = DateTimeOffset.MinValue;
   readonly Dictionary<string,string> observed = new Dictionary<string,string>();
   readonly Color ink = Color.FromArgb(236,232,224), muted = Color.FromArgb(161,161,161), accent = Color.FromArgb(216,156,125);
+  readonly Color amber = Color.FromArgb(231,175,76), green = Color.FromArgb(110,190,145), red = Color.FromArgb(240,123,112);
+  List<Reading> history = new List<Reading>();
+  readonly int[] alertLevel = new int[2]; readonly DateTimeOffset?[] alertReset = new DateTimeOffset?[2]; readonly double?[] alertPercent = new double?[2];
+  bool usageWarmed; string balloonSession, trayKey = ""; IntPtr trayHandle = IntPtr.Zero;
+  DateTimeOffset nextCleanup = DateTimeOffset.MinValue;
   float ScaleFactor { get { return DeviceDpi / 96f; } }
   int Px(float value) { return (int)Math.Round(value * ScaleFactor); }
-  public Widget() {
-   settings = Data.Load();
+  public Widget() : this(false) { }
+  // preview: offscreen rendering for tests, without tray icon, timers or saved preferences.
+  readonly bool preview;
+  public Widget(bool preview) {
+   this.preview = preview;
+   settings = preview ? new Settings { Mode = "code" } : Data.Load();
+   if (!preview) history = Pace.Load();
    Text = "Meu Claude · Uso"; FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.Manual;
    AutoScaleMode = AutoScaleMode.None; BackColor = Color.FromArgb(27,29,32); ForeColor = ink; TopMost = settings.OnTop;
    DoubleBuffered = true; ShowInTaskbar = false; Font = new Font("Segoe UI", 9);
@@ -229,27 +314,94 @@ namespace MeuClaudeWidget {
    menu.Items.Add("Atualizar", null, async delegate { await RefreshUsage(); });
    menu.Items.Add("Status da conexão", null, delegate { ShowStatusTip(); });
    menu.Items.Add("Projetos e sessões…", null, delegate { ShowRadar(); });
+   menu.Items.Add("Ir para o terminal da sessão", null, delegate { if (activeSession != null) FocusSession(activeSession.Id); else ShowRadar(); });
    var notifyItem = new ToolStripMenuItem("Avisar quando precisar de você / terminar") { Checked = settings.RadarAlerts, CheckOnClick = true };
    notifyItem.CheckedChanged += delegate { settings.RadarAlerts = notifyItem.Checked; TrySave(); };
    menu.Items.Add(notifyItem);
+   var usageItem = new ToolStripMenuItem("Avisar uso alto (80% / 95%) e renovação") { Checked = settings.UsageAlerts, CheckOnClick = true };
+   usageItem.CheckedChanged += delegate { settings.UsageAlerts = usageItem.Checked; TrySave(); };
+   menu.Items.Add(usageItem);
+   var startupItem = new ToolStripMenuItem("Iniciar com o Windows") { Checked = Program.StartsWithWindows(), Enabled = Program.AppFolder.Length > 0 };
+   startupItem.Click += delegate {
+    try { Program.SetStartup(!startupItem.Checked); } catch { MessageBox.Show(this,"Não foi possível alterar a inicialização automática."); }
+    startupItem.Checked = Program.StartsWithWindows();
+   };
+   menu.Items.Add(startupItem);
    menu.Items.Add(new ToolStripSeparator());
    menu.Items.Add("Configurar", null, delegate { Show(); Configure(); });
    menu.Items.Add("Ver uso no Claude", null, delegate { Program.OpenUsage(); });
    menu.Items.Add("Desconectar e apagar chave", null, delegate { Disconnect(); });
    menu.Items.Add("Sair", null, delegate { Close(); }); ContextMenuStrip = menu;
-   tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "Meu Claude · Uso", ContextMenuStrip = menu, Visible = true };
+   tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "Meu Claude · Uso", ContextMenuStrip = menu, Visible = !preview };
    tray.DoubleClick += delegate { Show(); Activate(); };
+   tray.BalloonTipClicked += delegate { if (balloonSession != null) FocusSession(balloonSession); };
+   UpdateTray();
    state.Click += delegate { ShowStatusTip(); };
    AttachDrag(this); AttachDrag(title);
    title.MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ToggleCompact(); };
    MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left && e.X < Px(254)) ToggleCompact(); };
    MouseClick += delegate(object sender, MouseEventArgs e) { if (settings.Compact && e.Button == MouseButtons.Left) { if (e.X >= Width-Px(28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft); else if (e.X >= Px(254) && !dragged) ShowRadar(); } };
-   timer.Interval = 1000; timer.Tick += async delegate { if (stopped) return; PinCompact(); if (DateTimeOffset.UtcNow >= nextRadar) RefreshRadar(); if (!busy && DateTimeOffset.UtcNow >= next && settings.Mode.Length > 0) await RefreshUsage(); UpdateLabels(); Invalidate(); };
+   timer.Interval = 1000; timer.Tick += async delegate {
+    if (stopped) return; PinCompact();
+    if (DateTimeOffset.UtcNow >= nextCleanup) { nextCleanup = DateTimeOffset.UtcNow.AddHours(1); var cleanup = Task.Run(() => RadarReader.Cleanup()); }
+    if (DateTimeOffset.UtcNow >= nextRadar) RefreshRadar();
+    if (!busy && DateTimeOffset.UtcNow >= next && settings.Mode.Length > 0) await RefreshUsage();
+    UpdateLabels(); Invalidate();
+   };
    Shown += async delegate {
+    if (preview) return;
     Arrange(); RestorePosition(); PinCompact(); RefreshRadar();
     timer.Start(); if (settings.Mode.Length == 0) Configure(); else await RefreshUsage();
    };
-   FormClosing += delegate { stopped = true; timer.Stop(); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); api.Dispose(); timer.Dispose(); menu.Dispose(); hint.Dispose(); };
+   FormClosing += delegate { stopped = true; timer.Stop(); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); menu.Dispose(); hint.Dispose(); };
+  }
+  void Balloon(string caption, string text, string session) { balloonSession = session; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
+  void FocusSession(string id) {
+   SessionInfo s = sessions.Find(x=>x.Id==id);
+   string problem = s == null ? "Sessão não encontrada." : s.Closed || s.State == "ended" ? "Esta sessão já foi fechada." : s.WindowPid <= 0 ? "Terminal desconhecido: rode Ativar-Radar.cmd de novo e reabra a sessão." : Program.FocusWindow(s.WindowPid) ? "" : "O terminal desta sessão não foi encontrado.";
+   if (problem.Length > 0) hint.Show(problem, this, new Point(Px(12), Px(4)), 5000);
+  }
+  // Tray icon shows the 5h percentage in the same colors as the strip.
+  void UpdateTray() {
+   Bucket b = buckets.Count > 0 ? buckets[0] : null;
+   bool known = b != null && b.Percent.HasValue;
+   string text = known ? Math.Min(999, Math.Round(b.Percent.Value)).ToString(CultureInfo.InvariantCulture) : "–";
+   Color color = stale || !known ? Color.FromArgb(135,137,142) : b.Percent.Value >= 90 ? red : b.Percent.Value >= 70 ? amber : accent;
+   string tip = "Meu Claude";
+   for (int i = 0; i < 2 && i < buckets.Count; i++) tip += (i == 0 ? " · 5h " : " · 7d ") + (buckets[i].Percent.HasValue ? Data.Percent(buckets[i].Percent.Value) : "—");
+   if (stale && last.HasValue) tip += " (antigo)";
+   tray.Text = tip.Length > 63 ? tip.Substring(0,63) : tip;
+   string key = text + "|" + color.ToArgb();
+   if (key == trayKey) return; trayKey = key;
+   Size size = SystemInformation.SmallIconSize;
+   using (var bitmap = new Bitmap(size.Width,size.Height))
+   using (var g = Graphics.FromImage(bitmap)) {
+    g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; g.Clear(Color.Transparent);
+    using (var shape = Rounded(new RectangleF(0,0,size.Width-1,size.Height-1),size.Width/4f)) using (var brush = new SolidBrush(color)) g.FillPath(brush,shape);
+    using (var font = new Font("Segoe UI",size.Height*(text.Length >= 3 ? .45f : .62f),FontStyle.Bold,GraphicsUnit.Pixel))
+    using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+    using (var brush = new SolidBrush(Color.FromArgb(27,29,32))) g.DrawString(text,font,brush,new RectangleF(0,1,size.Width,size.Height),format);
+    IntPtr handle = bitmap.GetHicon();
+    tray.Icon = Icon.FromHandle(handle);
+    if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle);
+    trayHandle = handle;
+   }
+  }
+  // Warns once per level (80%, 95%) in each usage window, and when a well-used window renews.
+  void CheckUsageAlerts() {
+   for (int i = 0; i < 2 && i < buckets.Count; i++) {
+    Bucket b = buckets[i]; if (!b.Percent.HasValue) continue;
+    double p = b.Percent.Value; int level = p >= 95 ? 95 : p >= 80 ? 80 : 0;
+    string name = i == 0 ? "sessão de 5h" : "semana";
+    bool renewed = alertReset[i].HasValue && b.Reset.HasValue && b.Reset.Value > alertReset[i].Value.AddMinutes(30);
+    if (renewed) alertLevel[i] = 0;
+    if (usageWarmed && settings.UsageAlerts) {
+     if (renewed && alertPercent[i].HasValue && alertPercent[i].Value >= 50 && p < alertPercent[i].Value) Balloon("Claude · limite renovado", "O uso da " + name + " voltou para " + Data.Percent(p) + ".", null);
+     else if (level > alertLevel[i]) Balloon("Claude · " + name + " em " + Data.Percent(p), Data.ResetLabel(b) + "\n" + Pace.Describe(history,i,b,DateTimeOffset.UtcNow), null);
+    }
+    alertLevel[i] = Math.Max(alertLevel[i], level); alertReset[i] = b.Reset; alertPercent[i] = p;
+   }
+   usageWarmed = true;
   }
   void AddButton(string text, EventHandler handler) {
    var b = new Button { Text = text, Width = text == "×" ? 27 : 78, Height = 28, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(42,44,48), ForeColor = ink, Margin = new Padding(0,0,4,0), TabStop = true };
@@ -261,22 +413,34 @@ namespace MeuClaudeWidget {
    c.MouseMove += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left && c.Capture) { if (Math.Abs(Cursor.Position.X-dragMouse.X)+Math.Abs(Cursor.Position.Y-dragMouse.Y)>4) dragged=true; Location = new Point(dragWindow.X + Cursor.Position.X - dragMouse.X, dragWindow.Y + Cursor.Position.Y - dragMouse.Y); } };
    c.MouseUp += delegate { c.Capture = false; RememberPosition(); TrySave(); };
   }
-  void TrySave() { try { Data.Save(settings); } catch { detail = "Não foi possível salvar preferências. Verifique a pasta LocalAppData."; } }
+  void TrySave() { if (preview) return; try { Data.Save(settings); } catch { detail = "Não foi possível salvar preferências. Verifique a pasta LocalAppData."; } }
   string RadarTitle() {
-   return activeSession == null ? "Radar · aguardando Claude Code" : activeSession.Project + " · " + activeSession.Label;
+   return activeSession == null ? "Radar · aguardando Claude Code" : activeSession.Project + " · " + activeSession.Activity;
+  }
+  List<SessionInfo> OtherActive() { return sessions.Where(s=>s!=activeSession && s.Active).ToList(); }
+  string OthersSummary() {
+   var others = OtherActive(); if (others.Count == 0) return "";
+   int waiting = others.Count(s=>s.State=="waiting");
+   var parts = new List<string>();
+   if (waiting > 0) parts.Add(waiting + " precisa(m) de você");
+   if (others.Count-waiting > 0) parts.Add((others.Count-waiting) + " trabalhando");
+   return "Outras sessões: " + String.Join(", ", parts) + " (" + String.Join(", ", others.Select(s=>s.Project).Distinct()) + ")";
   }
   string RadarDetails() {
    if (activeSession == null) return "Radar sem eventos. Execute Ativar-Radar.cmd uma vez, reabra o Claude Code e envie uma mensagem.\nA integração é para Claude Code no Windows, fora do WSL.";
-   return RadarTitle()+"\nSessão: "+activeSession.Id.Substring(0,8)+" · "+sessions.Count+" sessão(ões) nas últimas 24h\nÚltimo evento: "+activeSession.Event+" "+activeSession.Tool+" às "+activeSession.Time.ToLocalTime().ToString("dd/MM HH:mm:ss")+"\n"+gitInfo.Details+"\nEstado observado por eventos. Interrupções ou fechamento abrupto podem não gerar evento.";
+   string usage = activeSession.Usage.Length > 0 ? "Modelo: " + activeSession.Usage + "\n" : "";
+   string closed = activeSession.Closed ? "O processo do Claude Code desta sessão não está mais aberto.\n" : "";
+   string others = OthersSummary(); if (others.Length > 0) others += "\n";
+   return RadarTitle()+"\nSessão: "+activeSession.Id.Substring(0,8)+" · "+sessions.Count+" sessão(ões) nas últimas 24h\nÚltimo evento: "+activeSession.Event+" "+activeSession.Tool+" às "+activeSession.Time.ToLocalTime().ToString("dd/MM HH:mm:ss")+"\n"+usage+closed+others+gitInfo.Details+"\nEstado observado por eventos e pelo processo do Claude Code.";
   }
   void ShowRadar() {
    using (var form = new RadarForm(()=>new List<SessionInfo>(sessions),()=>RadarDetails(),id=>{
     settings.SelectedSession=id; SelectSession(); nextGit=DateTimeOffset.MinValue; TrySave(); UpdateLabels(); Invalidate(); RefreshGit();
-   })) form.ShowDialog(this);
+   },FocusSession)) form.ShowDialog(this);
   }
   void SelectSession() {
    SessionInfo selected = sessions.Find(s=>s.Id==settings.SelectedSession);
-   if (selected==null) selected=sessions.Find(s=>s.State!="ended");
+   if (selected==null) selected=sessions.Find(s=>s.State!="ended" && !s.Closed);
    if (selected==null && sessions.Count>0) selected=sessions[0];
    if ((activeSession==null ? "" : activeSession.Cwd)!=(selected==null ? "" : selected.Cwd)) {
     gitInfo=new GitInfo { Error=selected==null ? "Aguardando projeto" : "Lendo Git…" }; nextGit=DateTimeOffset.MinValue;
@@ -290,9 +454,9 @@ namespace MeuClaudeWidget {
     var found=await Task.Run(()=>RadarReader.Read()); if(stopped)return;
     foreach(var session in found) {
      string prior; observed.TryGetValue(session.Id,out prior);
-     if(radarWarmed && settings.RadarAlerts && prior!=session.State && DateTimeOffset.UtcNow-session.Time<TimeSpan.FromSeconds(15) && (session.State=="waiting"||session.State=="done"))
-      tray.ShowBalloonTip(4000,"Claude · "+session.Project,session.Label,ToolTipIcon.Info);
-     observed[session.Id]=session.State;
+     if(radarWarmed && settings.RadarAlerts && prior!=session.Effective && DateTimeOffset.UtcNow-session.Time<TimeSpan.FromSeconds(15) && (session.Effective=="waiting"||session.Effective=="done"))
+      Balloon("Claude · "+session.Project,session.Activity+(session.WindowPid>0 ? "\nClique para ir ao terminal." : ""),session.Id);
+     observed[session.Id]=session.Effective;
     }
     radarWarmed=true; sessions=found; SelectSession(); UpdateLabels(); Invalidate(); RefreshGit();
    } catch { gitInfo=new GitInfo { Error="Radar local indisponível" }; }
@@ -365,20 +529,20 @@ namespace MeuClaudeWidget {
    BackColor = settings.Compact ? Color.FromArgb(36,37,39) : Color.FromArgb(27,29,32);
    Region oldRegion = Region;
    if (settings.Compact) {
-    ClientSize = new Size(Px(502),Px(40));
+    ClientSize = new Size(Px(540),Px(40));
     using (var shape = Rounded(new RectangleF(0,0,Width,Height),Px(8))) Region = new Region(shape);
     if (oldRegion != null) oldRegion.Dispose();
     UpdateLabels(); Invalidate(); return;
    }
    Region = null; if (oldRegion != null) oldRegion.Dispose();
-   int count = Math.Max(2, buckets.Count); ClientSize = new Size(Px(370), Px(228 + count * 88));
+   int count = Math.Max(2, buckets.Count); ClientSize = new Size(Px(370), Px(240 + count * 88));
    title.SetBounds(Px(18),Px(17),Px(145),Px(27));
    actions.SetBounds(Px(155),Px(15),Px(204),Px(32));
    foreach (Control b in actions.Controls) { b.Width = Px(b.Text == "×" ? 27 : 78); b.Height = Px(28); }
-   radarSummary.SetBounds(Px(18),Px(60 + count * 88),Px(334),Px(80));
-   state.SetBounds(Px(18),Px(148 + count * 88),Px(334),Px(36));
-   timestamp.SetBounds(Px(18),Px(189 + count * 88),Px(224),Px(32));
-   compactButton.SetBounds(Px(250),Px(189 + count * 88),Px(102),Px(28));
+   radarSummary.SetBounds(Px(18),Px(60 + count * 88),Px(334),Px(92));
+   state.SetBounds(Px(18),Px(160 + count * 88),Px(334),Px(36));
+   timestamp.SetBounds(Px(18),Px(201 + count * 88),Px(224),Px(32));
+   compactButton.SetBounds(Px(250),Px(201 + count * 88),Px(102),Px(28));
    Invalidate();
   }
   void UpdateLabels() {
@@ -386,12 +550,18 @@ namespace MeuClaudeWidget {
    string previous = last.HasValue ? "Última: " + last.Value.ToLocalTime().ToString("HH:mm:ss") : "Sem leitura recebida";
    int remaining = (int)Math.Max(0, Math.Ceiling((next - DateTimeOffset.UtcNow).TotalSeconds));
    timestamp.Text = previous + (settings.Mode.Length == 0 ? "" : busy ? " · consultando…" : " · próxima: " + remaining + "s");
-   radarSummary.Text = RadarTitle()+"\n"+gitInfo.Summary+"\nClique para projetos e sessões";
+   string usage = activeSession != null && activeSession.Usage.Length > 0 ? activeSession.Usage : "Clique para projetos e sessões";
+   radarSummary.Text = RadarTitle()+"\n"+gitInfo.Summary+"\n"+usage;
    var summary = new StringBuilder("Meu Claude\n");
    summary.Append(RadarDetails()).Append("\n\n");
-   foreach (Bucket b in buckets) summary.Append(b.Title).Append(": ").Append(b.Percent.HasValue ? b.Percent.Value.ToString("0.#")+"%" : "—").Append("\n").Append(Data.ResetLabel(b)).Append("\n");
+   for (int i = 0; i < buckets.Count; i++) {
+    Bucket b = buckets[i];
+    summary.Append(b.Title).Append(": ").Append(b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—").Append("\n").Append(Data.ResetLabel(b)).Append("\n");
+    if (i < 2 && b.Percent.HasValue) summary.Append(Pace.Describe(history,i,b,DateTimeOffset.UtcNow)).Append("\n");
+   }
    summary.Append(previous).Append("\n").Append(status).Append("\n").Append(detail).Append("\nArraste para mover · duplo clique para detalhes · botão direito para opções");
    string value = summary.ToString(); if (lastHint != value) { hint.SetToolTip(this,value); lastHint = value; }
+   UpdateTray();
   }
   void ShowStatusTip() {
    hint.Show(status + "\n\n" + detail, this, new Point(Px(12), Px(4)), 10000);
@@ -451,6 +621,8 @@ namespace MeuClaudeWidget {
     }
     if (stopped) return;
     buckets = Data.ParseUsage(data); last = DateTimeOffset.UtcNow; stale = false;
+    if (Pace.Add(history, buckets, last.Value)) { try { Pace.Save(history); } catch { } }
+    CheckUsageAlerts();
     status = "Conectado · " + (settings.Mode == "code" ? "login atual do Claude Code" : "sessão do navegador");
     detail = "Percentuais retornados pelo Claude. Atualização periódica, não instantânea.\n" + (settings.Mode == "code" ? "Acompanha a conta atualmente conectada no Claude Code do Windows." : "Organização: " + settings.Organization);
     Arrange();
@@ -472,7 +644,23 @@ namespace MeuClaudeWidget {
     }
    }
   }
-  void Failure(string message) { stale = true; detail = message; status = (last.HasValue ? "Dado desatualizado" : "Sem dados") + " · tentativa automática"; }
+  void Failure(string message) {
+   stale = true; detail = message; status = (last.HasValue ? "Dado desatualizado" : "Sem dados") + " · tentativa automática";
+   // When the usage API refuses (429, 403...), the limits Claude Code passed to its status line are used without any request.
+   var local = RadarReader.LatestLimits(); DateTimeOffset time;
+   if (local == null || !DateTimeOffset.TryParse(local.Updated, out time) || (last.HasValue && time <= last.Value) || DateTimeOffset.UtcNow-time > TimeSpan.FromHours(6)) return;
+   var fresh = new List<Bucket> { LocalBucket("Sessão · 5 horas", local.Five, local.FiveReset), LocalBucket("Semana · todos os modelos", local.Week, local.WeekReset) };
+   fresh.AddRange(buckets.Skip(2));
+   buckets = fresh; last = time; stale = DateTimeOffset.UtcNow-time > TimeSpan.FromMinutes(15);
+   status = "Uso via barra de status do Claude Code" + (stale ? " · leitura antiga" : "");
+   detail = message + "\nPercentuais lidos localmente da barra de status do Claude Code às " + time.ToLocalTime().ToString("HH:mm") + ", sem requisição.";
+   if (Pace.Add(history, buckets, time)) { try { Pace.Save(history); } catch { } }
+   CheckUsageAlerts(); Arrange();
+  }
+  static Bucket LocalBucket(string title, double percent, string reset) {
+   DateTimeOffset time;
+   return new Bucket { Title = title, Percent = percent >= 0 ? percent : (double?)null, Reset = DateTimeOffset.TryParse(reset, out time) ? time : (DateTimeOffset?)null };
+  }
   string ShortReset(Bucket b) {
    if (!b.Reset.HasValue) return "sem previsão";
    var left = b.Reset.Value-DateTimeOffset.UtcNow;
@@ -481,17 +669,22 @@ namespace MeuClaudeWidget {
    if (left.TotalHours >= 1) return "renova " + (int)left.TotalHours + "h " + left.Minutes + "m";
    return "renova " + Math.Max(1,(int)Math.Ceiling(left.TotalMinutes)) + "min";
   }
+  Color StateColor(SessionInfo s) {
+   if (s == null || s.Closed || s.Silent || s.State == "ended") return muted;
+   switch (s.State) { case "working": case "background": return accent; case "waiting": return amber; case "done": return green; case "error": return red; default: return ink; }
+  }
   void PaintCompact(Graphics g) {
    using (var outline = Rounded(new RectangleF(.5f,.5f,Width-1,Height-1),Px(8)))
    using (var pen = new Pen(Color.FromArgb(67,68,70))) g.DrawPath(pen,outline);
    using (var normal = new Font("Segoe UI",8f))
    using (var bold = new Font("Segoe UI Semibold",8.5f))
    using (var tiny = new Font("Segoe UI",7.2f)) {
+    DateTimeOffset now = DateTimeOffset.UtcNow;
     for (int i=0;i<2;i++) {
      Bucket b = buckets.Count > i ? buckets[i] : new Bucket();
      int x = Px(8+i*124), y=Px(5), w=Px(116), h=Px(16);
-     Color baseColor = i==0 ? Color.FromArgb(231,175,76) : Color.FromArgb(98,167,230);
-     Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? Color.FromArgb(240,123,112) : baseColor;
+     Color baseColor = i==0 ? amber : Color.FromArgb(98,167,230);
+     Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? red : baseColor;
      using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) {
       using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
       var saved = g.Save(); g.SetClip(pill);
@@ -499,46 +692,151 @@ namespace MeuClaudeWidget {
       g.Restore(saved);
      }
      TextRenderer.DrawText(g,i==0 ? "5h" : "7d",normal,new Rectangle(x+Px(8),y,w/2,h),color,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     string number = b.Percent.HasValue ? b.Percent.Value.ToString("0.#",CultureInfo.GetCultureInfo("pt-BR"))+"%" : "—";
+     string number = b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—";
      TextRenderer.DrawText(g,number,bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     string caption = stale && last.HasValue ? "leitura antiga" : ShortReset(b);
-     TextRenderer.DrawText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+     // When the recent pace runs out before the renewal, the caption says when instead.
+     DateTimeOffset when = now; bool runsOut = !stale && buckets.Count > i && Pace.RunsOut(history,i,b,now,out when);
+     string caption = stale && last.HasValue ? "leitura antiga" : runsOut ? "esgota " + Pace.When(when).Replace("às ","") : ShortReset(b);
+     TextRenderer.DrawText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),runsOut ? red : Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
     using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i=0;i<3;i++) g.FillEllipse(dots,Width-Px(21-i*4),Px(11),Px(2),Px(2));
     using (var divider = new Pen(Color.FromArgb(65,67,70))) g.DrawLine(divider,Px(254),Px(7),Px(254),Px(33));
-    Color radarColor = activeSession == null ? muted : activeSession.Label == "Trabalhando" ? accent : activeSession.Label == "Precisa de você" ? Color.FromArgb(231,175,76) : activeSession.State == "done" ? Color.FromArgb(110,190,145) : ink;
-    TextRenderer.DrawText(g,RadarTitle(),normal,new Rectangle(Px(264),Px(3),Width-Px(298),Px(17)),radarColor,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
-    TextRenderer.DrawText(g,gitInfo.Summary,tiny,new Rectangle(Px(264),Px(23),Width-Px(298),Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    // Badges count the other active sessions: amber needs you, accent is working.
+    var others = OtherActive();
+    int waiting = others.Count(s=>s.State=="waiting");
+    var badges = new List<KeyValuePair<int,Color>>();
+    if (waiting > 0) badges.Add(new KeyValuePair<int,Color>(waiting,amber));
+    if (others.Count-waiting > 0) badges.Add(new KeyValuePair<int,Color>(others.Count-waiting,accent));
+    for (int i=0;i<badges.Count;i++) {
+     var area = new Rectangle(Width-Px(47)-i*Px(17),Px(4),Px(15),Px(15));
+     using (var brush = new SolidBrush(badges[i].Value)) g.FillEllipse(brush,area);
+     TextRenderer.DrawText(g,Math.Min(9,badges[i].Key).ToString(CultureInfo.InvariantCulture),tiny,area,Color.FromArgb(27,29,32),TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+    }
+    int radarWidth = Width-Px(298)-badges.Count*Px(17);
+    string headline = activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
+    TextRenderer.DrawText(g,headline,normal,new Rectangle(Px(264),Px(3),radarWidth,Px(17)),StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    var detail = new List<string>();
+    if (activeSession != null) {
+     if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
+     if (activeSession.Extras.Length > 0) detail.Add(activeSession.Extras.Replace(" subagentes"," sub").Replace(" subagente"," sub"));
+     if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
+    }
+    detail.Add(gitInfo.Summary);
+    TextRenderer.DrawText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264),Px(23),Width-Px(298),Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
     using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,Width-Px(17),Px(27),Px(4),Px(4));
    }
+  }
+  void DrawSpark(Graphics g, int index, Rectangle area, Color color) {
+   DateTimeOffset now = DateTimeOffset.UtcNow; TimeSpan span = index == 0 ? TimeSpan.FromHours(5) : TimeSpan.FromDays(7);
+   var points = Pace.Points(history,index,span,now);
+   if (points.Count < 2) return;
+   long from = (now-span).ToUnixTimeSeconds(), to = now.ToUnixTimeSeconds();
+   var line = points.Select(p=>new PointF(area.Left+area.Width*(float)(p.Key-from)/(to-from), area.Bottom-area.Height*(float)Math.Min(100,p.Value)/100)).ToArray();
+   using (var axis = new Pen(Color.FromArgb(49,51,56))) g.DrawLine(axis,area.Left,area.Bottom,area.Right,area.Bottom);
+   using (var pen = new Pen(color,Math.Max(1,Px(1.3f)))) g.DrawLines(pen,line);
   }
   protected override void OnPaint(PaintEventArgs e) {
    base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
    if (settings.Compact) { PaintCompact(g); return; }
    using (var pen = new Pen(Color.FromArgb(63,64,66))) g.DrawRectangle(pen,0,0,Width-1,Height-1);
    var rows = buckets.Count > 0 ? buckets : new List<Bucket> { new Bucket { Title = "Sessão · 5 horas" }, new Bucket { Title = "Semana · todos os modelos" } };
+   DateTimeOffset now = DateTimeOffset.UtcNow;
    using (var small = new Font("Segoe UI",8)) using (var normal = new Font("Segoe UI",9)) using (var number = new Font("Segoe UI Semibold",16)) {
     for (int i=0;i<rows.Count;i++) {
      Bucket b = rows[i]; int y = Px(62+i*88);
      Color color = stale ? Color.FromArgb(126,128,134) : !b.Percent.HasValue ? muted : b.Percent.Value >= 90 ? Color.FromArgb(238,115,111) : b.Percent.Value >= 70 ? Color.FromArgb(229,184,100) : accent;
      using (var brush = new SolidBrush(ink)) g.DrawString(b.Title, normal, brush, Px(18),y);
-     string value = b.Percent.HasValue ? b.Percent.Value.ToString("0.#",CultureInfo.GetCultureInfo("pt-BR"))+"%" : "—";
+     string value = b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—";
      using (var brush = new SolidBrush(color)) { SizeF size = g.MeasureString(value,number); g.DrawString(value,number,brush,Width-Px(18)-size.Width,y-Px(5)); }
      using (var brush = new SolidBrush(Color.FromArgb(49,51,56))) g.FillRectangle(brush,Px(18),y+Px(29),Px(334),Px(6));
      if (b.Percent.HasValue) using (var brush = new SolidBrush(color)) g.FillRectangle(brush,Px(18),y+Px(29),(float)(Px(334)*Math.Min(100,b.Percent.Value)/100),Px(6));
      using (var brush = new SolidBrush(muted)) g.DrawString(Data.ResetLabel(b),small,brush,Px(18),y+Px(44));
+     if (i < 2 && buckets.Count > i && b.Percent.HasValue) {
+      DrawSpark(g,i,new Rectangle(Width-Px(108),y+Px(46),Px(90),Px(12)),color);
+      DateTimeOffset when = now; bool runsOut = !stale && Pace.RunsOut(history,i,b,now,out when);
+      using (var brush = new SolidBrush(runsOut ? red : muted)) g.DrawString(Pace.Describe(history,i,b,now),small,brush,Px(18),y+Px(60));
+     }
     }
    }
   }
+  internal Bitmap TrayImage() { return tray.Icon.ToBitmap(); }
+  // Fills the widget with sample data so tests can render it without an account.
+  internal void Demo(bool compact) {
+   DateTimeOffset now = DateTimeOffset.UtcNow;
+   settings.Compact = compact;
+   buckets = new List<Bucket> {
+    new Bucket { Title = "Sessão · 5 horas", Percent = 62, Reset = now.AddHours(2.2) },
+    new Bucket { Title = "Semana · todos os modelos", Percent = 31, Reset = now.AddDays(3.5) },
+    new Bucket { Title = "Semana · opus", Percent = 12, Reset = now.AddDays(3.5) }
+   };
+   history = new List<Reading>();
+   for (int m = 300; m >= 0; m -= 10) history.Add(new Reading { T = now.AddMinutes(-m).ToUnixTimeSeconds(), P5 = Math.Max(0, 62-m*0.35), P7 = 31-m*0.01 });
+   last = now; stale = false; status = "Conectado · login atual do Claude Code";
+   sessions = new List<SessionInfo> {
+    new SessionInfo { Id = "a1b2c3d4e5", Cwd = @"C:\workspace\panoverse-backend", State = "working", Event = "PreToolUse", Tool = "Bash", Updated = now.ToString("o"), TurnStarted = now.AddMinutes(-4).ToString("o"), Subagents = 2, Model = "Opus 5.5", Context = 42, Cost = 1.23 },
+    new SessionInfo { Id = "f6e5d4c3b2", Cwd = @"C:\workspace\admin-panorama", State = "waiting", Event = "PermissionRequest", Tool = "Edit", Updated = now.AddMinutes(-1).ToString("o") },
+    new SessionInfo { Id = "0918273645", Cwd = @"C:\workspace\site", State = "working", Event = "PostToolUse", Updated = now.ToString("o"), TurnStarted = now.AddSeconds(-40).ToString("o") }
+   };
+   activeSession = sessions[0];
+   gitInfo = new GitInfo { Branch = "main", Files = 5, Added = 120, Removed = 34, LinesKnown = true };
+   Arrange(); UpdateLabels();
+  }
  }
  public static class Program {
+  public static string AppFolder = "";
   public static void OpenUsage() { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://claude.ai/settings/usage") { UseShellExecute = true }); } catch { MessageBox.Show("Abra https://claude.ai/settings/usage no navegador."); } }
-  public static void Run() {
+  public static void Run(string folder) {
+   AppFolder = folder ?? "";
    bool first; using (var mutex = new System.Threading.Mutex(true,"Local\\MeuClaudeWidget-v1",out first)) {
     if (!first) { MessageBox.Show("O widget já está aberto. Procure o ícone perto do relógio."); return; }
     Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new Widget());
    }
+  }
+  static string StartupLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Meu Claude Widget.lnk"); } }
+  public static bool StartsWithWindows() { return File.Exists(StartupLink); }
+  // The shortcut starts PowerShell hidden directly, avoiding the console flash of the .cmd launcher.
+  public static void SetStartup(bool enabled) {
+   if (!enabled) { if (File.Exists(StartupLink)) File.Delete(StartupLink); return; }
+   string shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+   Type type = Type.GetTypeFromProgID("WScript.Shell"); object host = Activator.CreateInstance(type);
+   try {
+    object link = type.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, host, new object[] { StartupLink });
+    try {
+     Type kind = link.GetType();
+     SetMember(kind, link, "TargetPath", shell);
+     SetMember(kind, link, "Arguments", "-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + Path.Combine(AppFolder, "Iniciar.ps1") + "\"");
+     SetMember(kind, link, "WorkingDirectory", AppFolder);
+     SetMember(kind, link, "WindowStyle", 7);
+     SetMember(kind, link, "Description", "Meu Claude · widget de uso");
+     kind.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+    } finally { Marshal.ReleaseComObject(link); }
+   } finally { Marshal.ReleaseComObject(host); }
+  }
+  static void SetMember(Type type, object target, string name, object value) { type.InvokeMember(name, BindingFlags.SetProperty, null, target, new object[] { value }); }
+  // Brings the terminal hosting a session forward; a synthetic Alt press lifts Windows' foreground lock.
+  public static bool FocusWindow(int pid) {
+   try {
+    using (var process = System.Diagnostics.Process.GetProcessById(pid)) {
+     IntPtr handle = process.MainWindowHandle; if (handle == IntPtr.Zero) return false;
+     if (Native.IsIconic(handle)) Native.ShowWindow(handle, 9);
+     Native.keybd_event(0x12, 0, 0, UIntPtr.Zero);
+     bool done = Native.SetForegroundWindow(handle);
+     Native.keybd_event(0x12, 0, 2, UIntPtr.Zero);
+     return done;
+    }
+   } catch { return false; }
+  }
+  public static void Preview(string folder) {
+   foreach (bool compact in new bool[] { true, false })
+    using (var widget = new Widget(true)) {
+     widget.Location = new Point(-20000,-20000); widget.Show(); widget.Demo(compact); Application.DoEvents();
+     using (var bitmap = new Bitmap(widget.Width,widget.Height)) {
+      widget.DrawToBitmap(bitmap,new Rectangle(0,0,widget.Width,widget.Height));
+      bitmap.Save(Path.Combine(folder,compact ? "preview-compacto.png" : "preview-painel.png"),System.Drawing.Imaging.ImageFormat.Png);
+     }
+     if (compact) using (var icon = widget.TrayImage()) icon.Save(Path.Combine(folder,"preview-bandeja.png"),System.Drawing.Imaging.ImageFormat.Png);
+    }
   }
   public static string SelfTest() {
    int untracked;
@@ -554,7 +852,28 @@ namespace MeuClaudeWidget {
    if (b[0].Percent.HasValue || b[1].Percent != 120) throw new Exception("Falha: limites numéricos.");
    const string fixture = "credencial-ficticia-apenas-para-teste";
    if (Data.Unprotect(Data.Protect(fixture)) != fixture) throw new Exception("Falha: proteção DPAPI.");
-   return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos e DPAPI. Nenhuma requisição foi feita.";
+
+   // Pace: +30%/h over the last hour, 60% left = 2h; an older, higher value from a previous window is ignored.
+   var now = DateTimeOffset.UtcNow; var history = new List<Reading>();
+   for (int m = 60; m >= 0; m -= 10) history.Add(new Reading { T = now.AddMinutes(-m).ToUnixTimeSeconds(), P5 = 40-m*0.5, P7 = 10 });
+   history.Insert(1, new Reading { T = now.AddMinutes(-55).ToUnixTimeSeconds(), P5 = 90, P7 = 10 });
+   var five = new Bucket { Percent = 40, Reset = now.AddHours(1) }; DateTimeOffset when;
+   var eta = Pace.Exhaustion(history,0,five,now);
+   if (!eta.HasValue || Math.Abs((eta.Value-now).TotalHours-2) > 0.05) throw new Exception("Falha: ritmo de uso.");
+   if (Pace.RunsOut(history,0,five,now,out when)) throw new Exception("Falha: previsão após a renovação.");
+   five.Reset = now.AddHours(4);
+   if (!Pace.RunsOut(history,0,five,now,out when)) throw new Exception("Falha: previsão antes da renovação.");
+   if (Pace.Exhaustion(history,1,new Bucket { Percent = 10, Reset = now.AddDays(3) },now).HasValue) throw new Exception("Falha: ritmo estável.");
+
+   var session = Data.Json().Deserialize<SessionInfo>("{\"Id\":\"x\",\"Cwd\":\"C:\\\\p\",\"State\":\"working\",\"Tool\":\"Bash\",\"Updated\":\""+now.ToString("o")+"\",\"TurnStarted\":\""+now.AddMinutes(-4).ToString("o")+"\",\"Subagents\":2,\"Agents\":[{\"Id\":\"a\",\"Stopped\":false}]}");
+   if (session.Activity != "Trabalhando há 4min · Bash · 2 subagentes") throw new Exception("Falha: atividade da sessão (" + session.Activity + ").");
+   using (var self = System.Diagnostics.Process.GetCurrentProcess()) {
+    session.ClaudePid = self.Id; session.ClaudeStarted = new DateTimeOffset(self.StartTime.ToUniversalTime()).ToString("o");
+    if (!RadarReader.Alive(session)) throw new Exception("Falha: processo vivo marcado como fechado.");
+    session.ClaudeStarted = new DateTimeOffset(self.StartTime.ToUniversalTime()).AddMinutes(-5).ToString("o");
+    if (RadarReader.Alive(session)) throw new Exception("Falha: PID reaproveitado tratado como a mesma sessão.");
+   }
+   return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos, DPAPI, ritmo de uso e atividade das sessões. Nenhuma requisição foi feita.";
   }
  }
 }
