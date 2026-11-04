@@ -211,8 +211,29 @@ cria um atalho na pasta de inicialização do seu usuário; desmarque para
 removê-lo. Não mude a pasta do widget de lugar depois de marcar; se mudar,
 desmarque e marque de novo.
 
+APONTAMENTO AUTOMÁTICO NO REDMINE
+De segunda a sexta, às 17:55, se houver tarefa atribuída a você em
+"Em andamento", o widget aponta as horas do dia nela (atividade
+Desenvolvimento, data de hoje, sem comentário) e avisa na bandeja.
+• Conta só o tempo em que a tarefa ficou em andamento HOJE, dentro da
+  jornada 08:00–12:00 e 13:12–18:00. Pausas (outro status) não contam.
+• Se a tarefa entrou em andamento num dia anterior, conta desde as 08:00.
+• Duas tarefas em andamento ao mesmo tempo: o tempo vai para a que
+  entrou por último, sem contar o mesmo minuto duas vezes.
+• Desconta o que você já apontou hoje na mesma tarefa.
+• Arredonda para o 0,5h mais próximo; menos de 15 min não é apontado.
+• Se o widget abrir depois das 17:55, aponta na abertura (mesmo dia).
+  Falhou? Tenta de novo a cada 5 min e avisa uma vez.
+Menu › Redmine: ligar/desligar, "Prévia do apontamento de hoje…" (não grava
+nada) e "Não apontar hoje" (feriado, saída mais cedo).
+A URL e a chave vêm de %USERPROFILE%\.claude\mcp-config.json
+(mcpServers.redmine.env REDMINE_URL / REDMINE_API_KEY). O widget não copia
+nem salva a chave. Sem o servidor "redmine" no mcp-config.json, nada acontece.
+Limitações: só funciona com o widget aberto; feriados não são detectados;
+uma tarefa esquecida em andamento conta até as 18:00.
+
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs e Radar.cs. Iniciar.ps1 compila-os e guarda o
+Código próprio em Widget.cs, Radar.cs e Redmine.cs. Iniciar.ps1 compila-os e guarda o
 resultado em %LOCALAPPDATA%\MeuClaudeWidget\bin.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.
 Não baixa pacotes, não instala serviços, não altera o registro e não envia
@@ -221,6 +242,8 @@ Destinos de rede programados:
 • https://claude.ai/api/organizations
 • https://claude.ai/api/organizations/{uuid}/usage
 • https://api.anthropic.com/api/oauth/usage
+• REDMINE_URL do mcp-config.json: GET de tarefas, histórico e apontamentos;
+  POST /time_entries.json uma vez por dia útil (apontamento automático)
 O botão de uso abre https://claude.ai/settings/usage no navegador padrão.
 Redirecionamentos HTTP não são seguidos; certificados TLS são verificados.
 A proteção do Windows (DPAPI, CurrentUser) criptografa a chave de sessão

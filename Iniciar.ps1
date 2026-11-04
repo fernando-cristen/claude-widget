@@ -5,6 +5,7 @@ try {
     Add-Type -AssemblyName System.Drawing
     $source = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Widget.cs'), [System.Text.Encoding]::UTF8)
     $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Radar.cs'), [System.Text.Encoding]::UTF8)
+    $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Redmine.cs'), [System.Text.Encoding]::UTF8)
     $references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Net.Http.dll', 'System.Web.Extensions.dll', 'System.Security.dll')
     # Compiling takes seconds; the DLL is cached by source hash and rebuilt only when a .cs file changes.
     $sha = [System.Security.Cryptography.SHA256]::Create()

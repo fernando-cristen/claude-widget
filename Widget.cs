@@ -1,5 +1,6 @@
 ﻿// Claude Widget — original, dependency-free .NET Framework / Windows Forms source.
-// Network access is read-only and restricted to the two Anthropic hosts below.
+// Network access to the two Anthropic hosts below is read-only. The only write is the daily
+// time entry on the Redmine host from mcp-config.json (Redmine.cs), when enabled.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -31,6 +32,8 @@ namespace MeuClaudeWidget {
   public bool UsageAlerts = true;
   public string SelectedSession = "";
   public int CompactX = -10000, CompactY = -10000;
+  public bool RedmineAuto = true;
+  public string RedmineLastRun = "";
  }
  public class Bucket {
   public string Title;
@@ -282,6 +285,7 @@ namespace MeuClaudeWidget {
   readonly int[] alertLevel = new int[2]; readonly DateTimeOffset?[] alertReset = new DateTimeOffset?[2]; readonly double?[] alertPercent = new double?[2];
   bool usageWarmed; string balloonSession, trayKey = ""; IntPtr trayHandle = IntPtr.Zero;
   DateTimeOffset nextCleanup = DateTimeOffset.MinValue;
+  bool redmineBusy; DateTimeOffset nextRedmine = DateTimeOffset.MinValue; string redmineErrorDay = "";
   float ScaleFactor { get { return DeviceDpi / 96f; } }
   int Px(float value) { return (int)Math.Round(value * ScaleFactor); }
   public Widget() : this(false) { }
@@ -321,6 +325,16 @@ namespace MeuClaudeWidget {
    var usageItem = new ToolStripMenuItem("Avisar uso alto (80% / 95%) e renovação") { Checked = settings.UsageAlerts, CheckOnClick = true };
    usageItem.CheckedChanged += delegate { settings.UsageAlerts = usageItem.Checked; TrySave(); };
    menu.Items.Add(usageItem);
+   var redmineMenu = new ToolStripMenuItem("Redmine");
+   var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
+   redmineAuto.CheckedChanged += delegate { settings.RedmineAuto = redmineAuto.Checked; TrySave(); };
+   redmineMenu.DropDownItems.Add(redmineAuto);
+   redmineMenu.DropDownItems.Add("Prévia do apontamento de hoje…", null, delegate { PreviewRedmine(); });
+   redmineMenu.DropDownItems.Add("Não apontar hoje", null, delegate {
+    settings.RedmineLastRun = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); TrySave();
+    hint.Show("Hoje não será feito apontamento automático no Redmine.", this, new Point(Px(12), Px(4)), 5000);
+   });
+   menu.Items.Add(redmineMenu);
    var startupItem = new ToolStripMenuItem("Iniciar com o Windows") { Checked = Program.StartsWithWindows(), Enabled = Program.AppFolder.Length > 0 };
    startupItem.Click += delegate {
     try { Program.SetStartup(!startupItem.Checked); } catch { MessageBox.Show(this,"Não foi possível alterar a inicialização automática."); }
@@ -345,6 +359,7 @@ namespace MeuClaudeWidget {
     if (stopped) return; PinCompact();
     if (DateTimeOffset.UtcNow >= nextCleanup) { nextCleanup = DateTimeOffset.UtcNow.AddHours(1); var cleanup = Task.Run(() => RadarReader.Cleanup()); }
     if (DateTimeOffset.UtcNow >= nextRadar) RefreshRadar();
+    if (settings.RedmineAuto && !redmineBusy && DateTimeOffset.UtcNow >= nextRedmine && WorkDay.Due(DateTime.Now, settings.RedmineLastRun)) RunRedmine();
     if (!busy && DateTimeOffset.UtcNow >= next && settings.Mode.Length > 0) await RefreshUsage();
     UpdateLabels(); Invalidate();
    };
@@ -356,6 +371,36 @@ namespace MeuClaudeWidget {
    FormClosing += delegate { stopped = true; timer.Stop(); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); menu.Dispose(); hint.Dispose(); };
   }
   void Balloon(string caption, string text, string session) { balloonSession = session; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
+  // Daily Redmine time entry: once per workday from 17:55; retries every 5 minutes on failure.
+  async void RunRedmine() {
+   if (preview) return;
+   redmineBusy = true; DateTime now = DateTime.Now; string today = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+   try {
+    List<LogItem> items = new List<LogItem>();
+    using (var client = RedmineClient.FromMcpConfig()) if (client != null) items = await AutoLog.Run(client, now);
+    settings.RedmineLastRun = today; TrySave();
+    var posted = items.Where(x => x.Posted).ToList();
+    if (posted.Count > 0)
+     Balloon("Redmine · horas apontadas", String.Join("\n", posted.Select(x => WorkDay.Amount(x.Hours) + " na #" + x.Issue + " (desde " + AutoLog.Since(x, now) + ")")), null);
+   } catch (Exception e) {
+    nextRedmine = DateTimeOffset.UtcNow.AddMinutes(5);
+    if (redmineErrorDay != today) { redmineErrorDay = today; Balloon("Redmine · apontamento falhou", e.Message + " Nova tentativa em 5 min.", null); }
+   } finally { redmineBusy = false; }
+  }
+  async void PreviewRedmine() {
+   DateTime now = DateTime.Now; string text;
+   try {
+    using (var client = RedmineClient.FromMcpConfig())
+     text = client == null ? "Redmine não configurado: adicione o servidor MCP \"redmine\" (REDMINE_URL e REDMINE_API_KEY) em %USERPROFILE%\\.claude\\mcp-config.json."
+      : AutoLog.Describe(await AutoLog.Plan(client, now), now);
+   }
+   catch (Exception e) { text = "Não foi possível consultar o Redmine.\r\n\r\n" + e.Message; }
+   string schedule = !settings.RedmineAuto ? "Apontamento automático desligado."
+    : settings.RedmineLastRun == now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ? "Hoje já foi apontado (ou pulado)."
+    : !WorkDay.IsWorkday(now) ? "Hoje não é dia útil: nada será apontado."
+    : "Apontamento automático hoje às 17:55.";
+   MessageBox.Show(this, text + "\r\n\r\n" + schedule + "\r\nNada foi gravado no Redmine por esta prévia.", "Prévia do apontamento · Redmine");
+  }
   void FocusSession(string id) {
    SessionInfo s = sessions.Find(x=>x.Id==id);
    string problem = s == null ? "Sessão não encontrada." : s.Closed || s.State == "ended" ? "Esta sessão já foi fechada." : s.WindowPid <= 0 ? "Terminal desconhecido: rode Ativar-Radar.cmd de novo e reabra a sessão." : Program.FocusWindow(s.WindowPid) ? "" : "O terminal desta sessão não foi encontrado.";
@@ -873,7 +918,29 @@ namespace MeuClaudeWidget {
     session.ClaudeStarted = new DateTimeOffset(self.StartTime.ToUniversalTime()).AddMinutes(-5).ToString("o");
     if (RadarReader.Alive(session)) throw new Exception("Falha: PID reaproveitado tratado como a mesma sessão.");
    }
-   return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos, DPAPI, ritmo de uso e atividade das sessões. Nenhuma requisição foi feita.";
+   // Redmine: hours inside 08:00–12:00 / 13:12–18:00 from the moment the issue entered "Em andamento".
+   var day = new DateTime(2026,11,4); DateTime end = WorkDay.DayEnd(day);
+   Func<int,int,StatusChange> toWork = (h,m) => new StatusChange { When = day.AddHours(h).AddMinutes(m), Old = "6", New = "2" };
+   Func<List<StatusSpan>,double> today = s => WorkDay.Hours(new Dictionary<int,List<StatusSpan>> { { 1, s } }, day)[1];
+   var spans = WorkDay.Spans(new[] { toWork(14,0) }, day.AddDays(-5), "2", end);
+   if (Math.Abs(today(spans)-4) > 1e-9 || WorkDay.Round(today(spans)) != 4) throw new Exception("Falha: Redmine a partir das 14:00.");
+   spans = WorkDay.Spans(new[] { new StatusChange { When = day.AddDays(-1).AddHours(15), Old = "1", New = "2" } }, day.AddDays(-5), "2", end);
+   if (Math.Abs(today(spans)-8.8) > 1e-9 || WorkDay.Round(today(spans)) != 9) throw new Exception("Falha: Redmine desde ontem.");
+   spans = WorkDay.Spans(new[] { toWork(11,30) }, day.AddDays(-5), "2", end);
+   if (Math.Abs(today(spans)-5.3) > 1e-9 || WorkDay.Round(today(spans)) != 5.5) throw new Exception("Falha: Redmine com almoço.");
+   spans = WorkDay.Spans(new[] { toWork(14,0), new StatusChange { When = day.AddHours(15), Old = "2", New = "8" }, new StatusChange { When = day.AddHours(16), Old = "8", New = "2" } }, day.AddDays(-5), "2", end);
+   if (Math.Abs(today(spans)-3) > 1e-9) throw new Exception("Falha: Redmine com pausa.");
+   spans = WorkDay.Spans(new[] { toWork(17,50) }, day.AddDays(-5), "2", end);
+   if (WorkDay.Round(today(spans)) != 0 || WorkDay.Round(0.25) != 0.5) throw new Exception("Falha: Redmine menos de 15 min.");
+   spans = WorkDay.Spans(new StatusChange[0], day.AddHours(9), "2", end);
+   if (Math.Abs(today(spans)-7.8) > 1e-9) throw new Exception("Falha: Redmine criada em andamento.");
+   var both = new Dictionary<int,List<StatusSpan>> { { 1, WorkDay.Spans(new[] { toWork(8,0) }, day.AddDays(-5), "2", end) }, { 2, WorkDay.Spans(new[] { toWork(15,0) }, day.AddDays(-5), "2", end) } };
+   var split = WorkDay.Hours(both, day);
+   if (Math.Abs(split[1]-5.8) > 1e-9 || Math.Abs(split[2]-3) > 1e-9) throw new Exception("Falha: Redmine com duas tarefas sobrepostas.");
+   if (WorkDay.Round(3.8 - 2) != 2 || WorkDay.Round(4 - 4) != 0) throw new Exception("Falha: Redmine desconto do já apontado.");
+   if (!WorkDay.Due(day.AddHours(17).AddMinutes(55), "") || WorkDay.Due(day.AddHours(17).AddMinutes(54), "") || WorkDay.Due(day.AddHours(18), "2026-11-04") || WorkDay.Due(new DateTime(2026,11,7,18,0,0), ""))
+    throw new Exception("Falha: Redmine horário de execução.");
+   return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos, DPAPI, ritmo de uso, atividade das sessões e cálculo de horas do Redmine. Nenhuma requisição foi feita.";
   }
  }
 }
