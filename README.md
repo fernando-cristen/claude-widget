@@ -263,6 +263,14 @@ Sons gerados pelo próprio widget (sem arquivos): um "ding-ding" quando uma
 sessão termina e um arpejo de três notas quando precisa de você.
 Menu: "Animações na faixa" e "Sons ao terminar / precisar de você" (ligados
 por padrão). A animação só roda enquanto algo está mudando.
+A mesma opção controla as transições suaves da faixa compacta:
+• troca de projeto/estado com um deslocamento discreto de 4 pixels;
+• entrada e saída da tarefa e reorganização dos blocos em cerca de 240 ms;
+• percentuais e barras de uso avançam até a nova leitura em cerca de 420 ms.
+No modo solto, a faixa cresce/recolhe mantendo a borda direita no lugar.
+Na barra de tarefas, espaço ocupado por novos ícones é liberado imediatamente;
+a transição continua apenas no conteúdo. Os cliques acompanham os blocos.
+Desligar "Animações na faixa" aplica o resultado final imediatamente.
 
 FIXO NA BARRA DE TAREFAS (COMO O CLIMA)
 No modo compacto, a faixa fica presa na barra de tarefas, num espaço livre:
@@ -283,7 +291,7 @@ suportada (volta ao modo livre). Os ícones da barra são lidos pelo UI
 Automation do próprio Windows, só para medir o espaço livre.
 
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs, Vida.cs
+Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs, Vida.cs, Transicoes.cs
 e Ui.cs (o kit visual das janelas: barra de título escura do Windows 11, ícones
 Segoe Fluent, fonte Segoe UI Variable). Iniciar.ps1 compila-os em memória.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.

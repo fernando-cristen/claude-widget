@@ -275,7 +275,7 @@ namespace MeuClaudeWidget {
   [DllImport("user32.dll")] internal static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool DestroyIcon(IntPtr handle);
  }
- public class Widget : Form {
+ public partial class Widget : Form {
   Settings settings; readonly Api api = new Api(); readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
   List<Bucket> buckets = new List<Bucket>();
   DateTimeOffset? last; DateTimeOffset next = DateTimeOffset.MinValue;
@@ -313,7 +313,7 @@ namespace MeuClaudeWidget {
   readonly System.Windows.Forms.Timer ambientTimer = new System.Windows.Forms.Timer { Interval = 33 };
   bool Docked { get { return !preview && settings.Compact && settings.DockTaskbar && slot != null; } }
   int FullWidth { get { return Px(540) + Lead; } }
-  bool Dense { get { return settings.Compact && Width < FullWidth - Px(2); } }
+  bool Dense { get { return settings.Compact && (stripPaintWidth > 0 ? stripPaintWidth : CompactWidth) < FullWidth - Px(2); } }
   sealed class Confetto { public float X, Y, VX, VY, Size, Angle, Spin; public Color Color; }
   List<Confetto> confetti; DateTime confettiUntil, bannerUntil; string banner = "";
   readonly System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer { Interval = 30 };
@@ -381,7 +381,7 @@ namespace MeuClaudeWidget {
    soundItem.CheckedChanged += delegate { settings.Sounds = soundItem.Checked; TrySave(); if (soundItem.Checked) Chime.Play(false); };
    menu.Items.Add(soundItem);
    var animItem = new ToolStripMenuItem("Animações na faixa") { Checked = settings.Animations, CheckOnClick = true };
-   animItem.CheckedChanged += delegate { settings.Animations = animItem.Checked; TrySave(); UpdateAmbient(); Invalidate(); };
+   animItem.CheckedChanged += delegate { settings.Animations = animItem.Checked; FinishStripMotion(); TrySave(); UpdateAmbient(); Invalidate(); };
    menu.Items.Add(animItem);
    var redmineMenu = new ToolStripMenuItem("Redmine");
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
@@ -423,27 +423,22 @@ namespace MeuClaudeWidget {
    tray.DoubleClick += delegate { Show(); Activate(); };
    tray.BalloonTipClicked += delegate { if (balloonAction != null) balloonAction(); else if (balloonSession != null) FocusSession(balloonSession); };
    anim.Tick += delegate { AnimateConfetti(); };
-   ambientTimer.Tick += delegate { if (stopped || !settings.Animations || !settings.Compact || !ambient.Animating(DateTime.Now)) ambientTimer.Stop(); Invalidate(); };
+   ambientTimer.Tick += delegate { AnimationTick(); };
    UpdateTray();
    state.Click += delegate { ShowStatusTip(); };
    AttachDrag(this); AttachDrag(title);
    title.MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ToggleCompact(); };
    MouseDoubleClick += delegate(object sender, MouseEventArgs e) {
     if (e.Button != MouseButtons.Left) return;
-    Rectangle usage, task, radar; DenseColumns(out usage, out task, out radar);
-    if (Dense ? usage.Contains(e.Location) : e.X < Px(254)) ToggleCompact();
+    if (HitLayout.Usage.Contains(e.Location)) ToggleCompact();
    };
    MouseEnter += delegate { hovering = true; Invalidate(); };
    MouseLeave += delegate { hovering = false; Invalidate(); };
    MouseClick += delegate(object sender, MouseEventArgs e) {
     if (!settings.Compact || e.Button != MouseButtons.Left) return;
     if (e.X >= Width-Px(Dense ? 22 : 28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft);
-    else if (Dense) {
-     Rectangle usage, task, radar; DenseColumns(out usage, out task, out radar);
-     if (task.Contains(e.Location)) GoToTask(); else if (radar.Contains(e.Location)) ShowRadar();
-    }
-    else if (taskShown && TaskPill.Contains(e.Location)) { if (!dragged) GoToTask(); }
-    else if (e.X >= Px(254)+Lead && !dragged) ShowRadar();
+    else if (taskShown && HitLayout.Task.Contains(e.Location)) { if (!dragged) GoToTask(); }
+    else if (HitLayout.Radar.Contains(e.Location) && !dragged) ShowRadar();
    };
    timer.Interval = 1000; timer.Tick += async delegate {
     if (stopped) return; PinCompact();
@@ -471,7 +466,7 @@ namespace MeuClaudeWidget {
     foregroundHook = Taskbar.WatchForeground(OnForeground);
     timer.Start(); if (settings.Mode.Length == 0) Configure(); else await RefreshUsage();
    };
-   FormClosing += delegate { stopped = true; timer.Stop(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
+   FormClosing += delegate { stopped = true; timer.Stop(); FinishStripMotion(); DisposeStripMotion(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
   }
   void Balloon(string caption, string text, string session) { balloonSession = session; balloonAction = null; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
   static void OpenUrl(string url) {
@@ -654,9 +649,9 @@ namespace MeuClaudeWidget {
    } else if (!settings.RedmineClock && clockStamp.Length > 0) { clockStamp = ""; WriteClock(); }
    if (show == taskShown) return;
    if (Docked) { taskShown = show; ApplyDock(); Invalidate(); return; }
-   int baseLeft = Left + Lead, bottom = Bottom;
+   int bottom = Bottom;
    taskShown = show; Arrange();
-   if (settings.Compact) Left = baseLeft - Lead; else Top = bottom - Height;
+   if (!settings.Compact) Top = bottom - Height;
    PinCompact();
   }
   async void MeasureTaskbar() {
@@ -679,13 +674,13 @@ namespace MeuClaudeWidget {
   void ApplyDock() {
    if (!Docked || stopped) return;
    // Steps off-screen (instead of Hide/Show, which could take the focus from the app in use).
-   if (slot.Hidden || slot.Fullscreen) { Place(new Point(-32000, -32000)); return; }
+   if (slot.Hidden || slot.Fullscreen) { StopBoundsMotion(); stripMotion.Reset(); Place(new Point(-32000, -32000)); return; }
    bool left = settings.DockSide == "left" || (settings.DockSide != "right" && slot.LeftGap.Width >= slot.RightGap.Width);
    Rectangle gap = left ? slot.LeftGap : slot.RightGap;
    int width = Math.Max(Px(180), Math.Min(FullWidth, gap.Width)), height = Px(40);
    var place = new Point(left ? gap.Left : gap.Right - width, slot.Bar.Top + (slot.Bar.Height - height) / 2);
-   if (width != dockWidth || Width != width) { placing = true; try { dockWidth = width; Arrange(); } finally { placing = false; } }
-   Place(place);
+   dockWidth = width;
+   SetCompactBounds(new Rectangle(place,new Size(width,height)),new Rectangle(Math.Min(gap.Left,place.X),gap.Y,Math.Max(width,gap.Width),gap.Height));
    // Taskbar color on both sides (Mica is a horizontal gradient), painted as the strip's background so it reads as part of the bar.
    int middle = slot.Bar.Top + slot.Bar.Height / 2;
    Color a = Taskbar.Sample(new Point(place.X - 3, middle)), b = Taskbar.Sample(new Point(place.X + width + 3, middle));
@@ -792,7 +787,7 @@ namespace MeuClaudeWidget {
   void AttachDrag(Control c) {
    c.MouseDown += delegate(object sender, MouseEventArgs e) {
     dragged = false; dragging = false;
-    if (e.Button == MouseButtons.Left && !Docked && !(settings.Compact && c == this && e.X >= Width-Px(28))) { dragging = true; dragMouse = Cursor.Position; dragWindow = Location; c.Capture = true; }
+    if (e.Button == MouseButtons.Left && !Docked && !(settings.Compact && c == this && e.X >= Width-Px(28))) { FinishStripMotion(); StopBoundsMotion(); dragging = true; dragMouse = Cursor.Position; dragWindow = Location; c.Capture = true; }
    };
    c.MouseMove += delegate(object sender, MouseEventArgs e) {
     if (!dragging || e.Button != MouseButtons.Left || Docked) return;
@@ -836,7 +831,7 @@ namespace MeuClaudeWidget {
   }
   void ShowRadar() {
    using (var form = new RadarForm(()=>new List<SessionInfo>(sessions),()=>RadarDetails(),id=>{
-    settings.SelectedSession=id; SelectSession(); nextGit=DateTimeOffset.MinValue; TrySave(); UpdateLabels(); Invalidate(); RefreshGit();
+    settings.SelectedSession=id; SelectSession(); UpdateAmbient(); nextGit=DateTimeOffset.MinValue; TrySave(); UpdateLabels(); Invalidate(); RefreshGit();
    },FocusSession,SessionTask)) form.ShowDialog(this);
   }
   void SelectSession() {
@@ -909,6 +904,7 @@ namespace MeuClaudeWidget {
    else { settings.X = Left; settings.Y = Top; }
   }
   void RestorePosition() {
+   StopBoundsMotion(); stripMotion.Reset();
    if (Docked) { ApplyDock(); return; }
    int x = settings.Compact ? (settings.CompactX == -10000 ? -10000 : settings.CompactX - Lead) : settings.X;
    int y = settings.Compact ? settings.CompactY : settings.Y;
@@ -937,7 +933,7 @@ namespace MeuClaudeWidget {
    PinCompact();
   }
   void ToggleCompact() {
-   RememberPosition(); settings.Compact = !settings.Compact; Arrange(); RestorePosition(); TrySave(); PinCompact();
+   FinishStripMotion(); StopBoundsMotion(); RememberPosition(); settings.Compact = !settings.Compact; Arrange(); RestorePosition(); TrySave(); PinCompact(); UpdateAmbient();
   }
   static GraphicsPath Rounded(RectangleF rect, float radius) {
    var path = new GraphicsPath(); float d = Math.Min(radius*2,Math.Min(rect.Width,rect.Height));
@@ -949,13 +945,14 @@ namespace MeuClaudeWidget {
    title.Visible = actions.Visible = state.Visible = timestamp.Visible = compactButton.Visible = radarSummary.Visible = !settings.Compact;
    taskLabel.Visible = !settings.Compact && taskShown;
    BackColor = settings.Compact ? (Docked && !dockBack.IsEmpty ? dockBack : Color.FromArgb(36,37,39)) : Color.FromArgb(27,29,32);
-   Region oldRegion = Region;
    if (settings.Compact) {
-    ClientSize = new Size(Docked && dockWidth > 0 ? dockWidth : FullWidth, Px(40));
-    using (var shape = Rounded(new RectangleF(0,0,Width,Height),Px(8))) Region = new Region(shape);
-    if (oldRegion != null) oldRegion.Dispose();
+    if(Docked) ApplyDock();
+    else { int right=compactBoundsReady?boundsMotion.Target.Right:Right; SetCompactBounds(new Rectangle(right-FullWidth,Top,FullWidth,Px(40)),Rectangle.Empty); }
+    UpdateCompactRegion();
     UpdateLabels(); Invalidate(); return;
    }
+   FinishStripMotion(); StopBoundsMotion();
+   Region oldRegion = Region;
    Region = null; if (oldRegion != null) oldRegion.Dispose();
    int count = Math.Max(2, buckets.Count), extra = taskShown ? 50 : 0; ClientSize = new Size(Px(370), Px(240 + extra + count * 88));
    title.SetBounds(Px(18),Px(17),Px(145),Px(27));
@@ -1111,7 +1108,7 @@ namespace MeuClaudeWidget {
    int x = usage.Right + Px(9);
    task = taskShown && CurrentTask != null ? new Rectangle(x, 0, Px(92), Height) : Rectangle.Empty;
    if (!task.IsEmpty) x = task.Right + Px(9);
-   radar = new Rectangle(x, 0, Math.Max(0, Width - Px(24) - x), Height);
+   radar = new Rectangle(x, 0, Math.Max(0, StripWidth - Px(24) - x), Height);
   }
   void PaintDense(Graphics g) {
    Rectangle usage, task, radar; DenseColumns(out usage, out task, out radar);
@@ -1120,7 +1117,7 @@ namespace MeuClaudeWidget {
    using (var divider = new Pen(Color.FromArgb(40, 255, 255, 255))) {
     DateTimeOffset now = DateTimeOffset.UtcNow;
     for (int i = 0; i < 2; i++) {
-     Bucket b = buckets.Count > i ? buckets[i] : new Bucket();
+     Bucket b = buckets.Count > i ? buckets[i] : new Bucket(); double? displayed = VisualUsage(i,b);
      Color baseColor = i == 0 ? amber : Color.FromArgb(98,167,230);
      DateTimeOffset when; bool runsOut = !stale && buckets.Count > i && Pace.RunsOut(history, i, b, now, out when);
      Color color = stale ? Color.FromArgb(135,137,142) : (b.Percent.HasValue && b.Percent.Value >= 90) || runsOut ? red : baseColor;
@@ -1128,82 +1125,82 @@ namespace MeuClaudeWidget {
      var pill = new Rectangle(usage.X, i == 0 ? Px(4) : Px(21), usage.Width, Px(15));
      using (var shape = Rounded(pill, Px(7.5f))) {
       using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background, shape);
-      var saved = g.Save(); g.SetClip(shape);
-      if (b.Percent.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95, color))) g.FillRectangle(fill, pill.X, pill.Y, (float)(pill.Width * Math.Min(100, b.Percent.Value) / 100), pill.Height);
+      var saved = g.Save(); g.SetClip(shape, CombineMode.Intersect);
+      if (displayed.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95, color))) g.FillRectangle(fill, pill.X, pill.Y, (float)(pill.Width * Math.Min(100, displayed.Value) / 100), pill.Height);
       g.Restore(saved);
      }
-     TextRenderer.DrawText(g, i == 0 ? "5h" : "7d", tiny, new Rectangle(pill.X + Px(6), pill.Y, pill.Width, pill.Height), color, flags);
-     TextRenderer.DrawText(g, b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—", bold, new Rectangle(pill.X, pill.Y, pill.Width - Px(6), pill.Height), ink, (flags & ~TextFormatFlags.Left) | TextFormatFlags.Right);
+     StripText(g, i == 0 ? "5h" : "7d", tiny, new Rectangle(pill.X + Px(6), pill.Y, pill.Width, pill.Height), color, flags);
+     StripText(g, displayed.HasValue ? Data.Percent(displayed.Value) : "—", bold, new Rectangle(pill.X, pill.Y, pill.Width - Px(6), pill.Height), ink, (flags & ~TextFormatFlags.Left) | TextFormatFlags.Right);
     }
     g.DrawLine(divider, usage.Right + Px(4), Px(9), usage.Right + Px(4), Height - Px(9));
     var current = CurrentTask;
     if (!task.IsEmpty && current != null) {
      double total; taskTotal.TryGetValue(current.Id, out total);
-     TextRenderer.DrawText(g, "#" + current.Id, normal, new Rectangle(task.X, Px(4), task.Width, Px(15)), green, flags);
-     TextRenderer.DrawText(g, WorkDay.Duration(total) + (current.Spans.Count > 1 ? "  " + current.Spans.Count + "x" : ""), bold, new Rectangle(task.X, Px(21), task.Width, Px(15)), ink, flags);
+     StripText(g, "#" + current.Id, normal, new Rectangle(task.X, Px(4), task.Width, Px(15)), green, flags);
+     StripText(g, WorkDay.Duration(total) + (current.Spans.Count > 1 ? "  " + current.Spans.Count + "x" : ""), bold, new Rectangle(task.X, Px(21), task.Width, Px(15)), ink, flags);
      g.DrawLine(divider, task.Right + Px(4), Px(9), task.Right + Px(4), Height - Px(9));
     }
     bool celebrating = DateTime.Now < bannerUntil;
     string headline = celebrating ? banner : activeSession == null ? "Radar · aguardando" : activeSession.Project + " · " + activeSession.Label;
     int orb = settings.Animations ? Px(15) : 0;
     if (orb > 0) ambient.PaintOrb(g, radar.X + Px(5), Px(11.5f), ScaleFactor, DateTime.Now);
-    TextRenderer.DrawText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : StateColor(activeSession), flags);
+    StripText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : StateColor(activeSession), flags);
     var detail = new List<string>();
     if (activeSession != null) {
      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
      if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
     }
     detail.Add(gitInfo.Summary);
-    TextRenderer.DrawText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X, Px(21), radar.Width, Px(15)), muted, flags);
+    StripText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X, Px(21), radar.Width, Px(15)), muted, flags);
     // Other active sessions: small dots (amber needs you, accent working); then the menu dots.
-    var others = OtherActive(); int waiting = others.Count(s => s.State == "waiting"), x = Width - Px(18);
+    var others = OtherActive(); int waiting = others.Count(s => s.State == "waiting"), x = StripWidth - Px(18);
     if (others.Count - waiting > 0) using (var brush = new SolidBrush(accent)) g.FillEllipse(brush, x, Px(8), Px(6), Px(6));
     if (waiting > 0) using (var brush = new SolidBrush(amber)) g.FillEllipse(brush, x + Px(7), Px(8), Px(6), Px(6));
-    using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i = 0; i < 3; i++) g.FillEllipse(dots, Width - Px(15) + i * Px(4), Px(26), Px(2), Px(2));
+    using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i = 0; i < 3; i++) g.FillEllipse(dots, StripWidth - Px(15) + i * Px(4), Px(26), Px(2), Px(2));
    }
   }
   void PaintCompact(Graphics g) {
-   if (Docked && !dockLeft.IsEmpty && Width > 0)
-    using (var back = new LinearGradientBrush(new Rectangle(-1, 0, Width + 2, Height), dockLeft, dockRight, 0f)) g.FillRectangle(back, ClientRectangle);
-   if (Docked && hovering) using (var glow = Rounded(new RectangleF(Px(1),Px(1),Width-Px(2),Height-Px(2)),Px(6))) using (var brush = new SolidBrush(Color.FromArgb(22,255,255,255))) g.FillPath(brush,glow);
+   if (Docked && !dockLeft.IsEmpty && StripWidth > 0)
+    using (var back = new LinearGradientBrush(new Rectangle(-1, 0, StripWidth + 2, Height), dockLeft, dockRight, 0f)) g.FillRectangle(back, new Rectangle(0,0,StripWidth,Height));
+   if (Docked && hovering) using (var glow = Rounded(new RectangleF(Px(1),Px(1),StripWidth-Px(2),Height-Px(2)),Px(6))) using (var brush = new SolidBrush(Color.FromArgb(22,255,255,255))) g.FillPath(brush,glow);
    if (Dense) { PaintDense(g); return; }
-   if (!Docked) using (var outline = Rounded(new RectangleF(.5f,.5f,Width-1,Height-1),Px(8)))
+   if (!Docked) using (var outline = Rounded(new RectangleF(.5f,.5f,StripWidth-1,Height-1),Px(8)))
    using (var pen = new Pen(Color.FromArgb(67,68,70))) g.DrawPath(pen,outline);
    using (var normal = new Font("Segoe UI",8f))
    using (var bold = new Font("Segoe UI Semibold",8.5f))
    using (var tiny = new Font("Segoe UI",7.2f)) {
     DateTimeOffset now = DateTimeOffset.UtcNow;
     for (int i=0;i<2;i++) {
-     Bucket b = buckets.Count > i ? buckets[i] : new Bucket();
+     Bucket b = buckets.Count > i ? buckets[i] : new Bucket(); double? displayed = VisualUsage(i,b);
      int x = Px(8+i*124), y=Px(5), w=Px(116), h=Px(16);
      Color baseColor = i==0 ? amber : Color.FromArgb(98,167,230);
      Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? red : baseColor;
      using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) {
       using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
-      var saved = g.Save(); g.SetClip(pill);
-      if (b.Percent.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95,color))) g.FillRectangle(fill,x,y,(float)(w*Math.Min(100,b.Percent.Value)/100),h);
+      var saved = g.Save(); g.SetClip(pill, CombineMode.Intersect);
+      if (displayed.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95,color))) g.FillRectangle(fill,x,y,(float)(w*Math.Min(100,displayed.Value)/100),h);
       g.Restore(saved);
      }
-     TextRenderer.DrawText(g,i==0 ? "5h" : "7d",normal,new Rectangle(x+Px(8),y,w/2,h),color,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     string number = b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—";
-     TextRenderer.DrawText(g,number,bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     StripText(g,i==0 ? "5h" : "7d",normal,new Rectangle(x+Px(8),y,w/2,h),color,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     string number = displayed.HasValue ? Data.Percent(displayed.Value) : "—";
+     StripText(g,number,bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      // When the recent pace runs out before the renewal, the caption says when instead.
      DateTimeOffset when = now; bool runsOut = !stale && buckets.Count > i && Pace.RunsOut(history,i,b,now,out when);
      string caption = stale && last.HasValue ? "leitura antiga" : runsOut ? "esgota " + Pace.When(when).Replace("às ","") : ShortReset(b);
-     TextRenderer.DrawText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),runsOut ? red : Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+     StripText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),runsOut ? red : Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
     // Third pill: working hours on the Redmine issue in progress since it entered "Em andamento".
     var task = taskShown ? CurrentTask : null;
     if (task != null) {
      int x = Px(256), y = Px(5), w = Px(116), h = Px(16); double total; taskTotal.TryGetValue(task.Id, out total);
      using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
-     TextRenderer.DrawText(g,"#"+task.Id,normal,new Rectangle(x+Px(8),y,w-Px(8),h),green,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     TextRenderer.DrawText(g,WorkDay.Duration(total),bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     StripText(g,"#"+task.Id,normal,new Rectangle(x+Px(8),y,w-Px(8),h),green,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     StripText(g,WorkDay.Duration(total),bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      string since = (task.Spans.Count > 1 ? task.Spans.Count + "x · " : "") + "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
-     TextRenderer.DrawText(g,since,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+     StripText(g,since,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
     int lead = Lead;
-    using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i=0;i<3;i++) g.FillEllipse(dots,Width-Px(21-i*4),Px(11),Px(2),Px(2));
+    using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i=0;i<3;i++) g.FillEllipse(dots,StripWidth-Px(21-i*4),Px(11),Px(2),Px(2));
     using (var divider = new Pen(Color.FromArgb(65,67,70))) g.DrawLine(divider,Px(254)+lead,Px(7),Px(254)+lead,Px(33));
     // Badges count the other active sessions: amber needs you, accent is working.
     var others = OtherActive();
@@ -1212,16 +1209,16 @@ namespace MeuClaudeWidget {
     if (waiting > 0) badges.Add(new KeyValuePair<int,Color>(waiting,amber));
     if (others.Count-waiting > 0) badges.Add(new KeyValuePair<int,Color>(others.Count-waiting,accent));
     for (int i=0;i<badges.Count;i++) {
-     var area = new Rectangle(Width-Px(47)-i*Px(17),Px(4),Px(15),Px(15));
+     var area = new Rectangle(StripWidth-Px(47)-i*Px(17),Px(4),Px(15),Px(15));
      using (var brush = new SolidBrush(badges[i].Value)) g.FillEllipse(brush,area);
-     TextRenderer.DrawText(g,Math.Min(9,badges[i].Key).ToString(CultureInfo.InvariantCulture),tiny,area,Color.FromArgb(27,29,32),TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     StripText(g,Math.Min(9,badges[i].Key).ToString(CultureInfo.InvariantCulture),tiny,area,Color.FromArgb(27,29,32),TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
     }
-    int radarWidth = Width-Px(298)-lead-badges.Count*Px(17);
+    int radarWidth = StripWidth-Px(298)-lead-badges.Count*Px(17);
     bool celebrating = DateTime.Now < bannerUntil;
     string headline = celebrating ? banner : activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
     int orb = settings.Animations ? Px(15) : 0;
     if (orb > 0) ambient.PaintOrb(g, Px(269)+lead, Px(11.5f), ScaleFactor, DateTime.Now);
-    TextRenderer.DrawText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    StripText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     var detail = new List<string>();
     if (activeSession != null) {
      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
@@ -1229,9 +1226,9 @@ namespace MeuClaudeWidget {
      if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
     }
     detail.Add(gitInfo.Summary);
-    TextRenderer.DrawText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead,Px(23),Width-Px(298)-lead,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    StripText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead,Px(23),StripWidth-Px(298)-lead,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
-    using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,Width-Px(17),Px(27),Px(4),Px(4));
+    using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,StripWidth-Px(17),Px(27),Px(4),Px(4));
    }
   }
   void DrawSpark(Graphics g, int index, Rectangle area, Color color) {
@@ -1246,7 +1243,7 @@ namespace MeuClaudeWidget {
   protected override void OnPaint(PaintEventArgs e) {
    base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
    if (settings.Compact) {
-    PaintCompact(g);
+    PaintMovingCompact(g);
     if (settings.Animations) ambient.PaintEdge(g, ClientRectangle, ScaleFactor, Px(7), DateTime.Now);
     PaintConfetti(g); return;
    }
