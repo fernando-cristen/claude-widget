@@ -34,6 +34,7 @@ namespace MeuClaudeWidget {
   public int CompactX = -10000, CompactY = -10000;
   public bool RedmineAuto = true;
   public string RedmineLastRun = "";
+  public bool RedmineClock = true;
  }
  public class Bucket {
   public string Title;
@@ -286,6 +287,14 @@ namespace MeuClaudeWidget {
   bool usageWarmed; string balloonSession, trayKey = ""; IntPtr trayHandle = IntPtr.Zero;
   DateTimeOffset nextCleanup = DateTimeOffset.MinValue;
   bool redmineBusy; DateTimeOffset nextRedmine = DateTimeOffset.MinValue; string redmineErrorDay = "";
+  // Live clock of the Redmine issue in progress: issues refresh every 3 minutes, hours are recomputed every second.
+  List<ActiveIssue> tasks = new List<ActiveIssue>(); bool taskShown, clockBusy; DateTimeOffset nextClock = DateTimeOffset.MinValue;
+  Dictionary<int,double> taskTotal = new Dictionary<int,double>(), taskToday = new Dictionary<int,double>();
+  Label taskLabel;
+  ActiveIssue CurrentTask { get { return tasks.Count == 0 ? null : tasks.OrderBy(t => t.Current.Start).Last(); } }
+  // Extra width of the compact strip taken by the task pill; positions are saved without it.
+  int Lead { get { return settings.Compact && taskShown ? Px(124) : 0; } }
+  Rectangle TaskPill { get { return new Rectangle(Px(256),0,Px(120),Px(40)); } }
   float ScaleFactor { get { return DeviceDpi / 96f; } }
   int Px(float value) { return (int)Math.Round(value * ScaleFactor); }
   public Widget() : this(false) { }
@@ -303,6 +312,8 @@ namespace MeuClaudeWidget {
    timestamp = new Label { ForeColor = muted, AutoSize = false, Font = new Font("Segoe UI",8) }; Controls.Add(timestamp);
    radarSummary = new Label { BackColor = Color.FromArgb(38,41,45), ForeColor = ink, Padding = new Padding(9), Cursor = Cursors.Hand }; Controls.Add(radarSummary);
    radarSummary.Click += delegate { ShowRadar(); };
+   taskLabel = new Label { BackColor = Color.FromArgb(38,41,45), ForeColor = green, Padding = new Padding(9,4,9,4), Cursor = Cursors.Hand, Visible = false }; Controls.Add(taskLabel);
+   taskLabel.Click += delegate { OpenTask(); };
    compactButton = new Button { Text = "Compactar", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(42,44,48), ForeColor = accent, TabStop = true, AccessibleName = "Voltar ao modo compacto" };
    compactButton.FlatAppearance.BorderSize = 0;
    compactButton.Click += delegate { if (!settings.Compact) ToggleCompact(); };
@@ -329,6 +340,9 @@ namespace MeuClaudeWidget {
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
    redmineAuto.CheckedChanged += delegate { settings.RedmineAuto = redmineAuto.Checked; TrySave(); };
    redmineMenu.DropDownItems.Add(redmineAuto);
+   var redmineClock = new ToolStripMenuItem("Mostrar horas da tarefa em andamento") { Checked = settings.RedmineClock, CheckOnClick = true };
+   redmineClock.CheckedChanged += delegate { settings.RedmineClock = redmineClock.Checked; TrySave(); nextClock = DateTimeOffset.MinValue; UpdateTaskClock(); };
+   redmineMenu.DropDownItems.Add(redmineClock);
    redmineMenu.DropDownItems.Add("Prévia do apontamento de hoje…", null, delegate { PreviewRedmine(); });
    redmineMenu.DropDownItems.Add("Não apontar hoje", null, delegate {
     settings.RedmineLastRun = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); TrySave();
@@ -354,12 +368,19 @@ namespace MeuClaudeWidget {
    AttachDrag(this); AttachDrag(title);
    title.MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ToggleCompact(); };
    MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left && e.X < Px(254)) ToggleCompact(); };
-   MouseClick += delegate(object sender, MouseEventArgs e) { if (settings.Compact && e.Button == MouseButtons.Left) { if (e.X >= Width-Px(28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft); else if (e.X >= Px(254) && !dragged) ShowRadar(); } };
+   MouseClick += delegate(object sender, MouseEventArgs e) {
+    if (!settings.Compact || e.Button != MouseButtons.Left) return;
+    if (e.X >= Width-Px(28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft);
+    else if (taskShown && TaskPill.Contains(e.Location)) { if (!dragged) OpenTask(); }
+    else if (e.X >= Px(254)+Lead && !dragged) ShowRadar();
+   };
    timer.Interval = 1000; timer.Tick += async delegate {
     if (stopped) return; PinCompact();
     if (DateTimeOffset.UtcNow >= nextCleanup) { nextCleanup = DateTimeOffset.UtcNow.AddHours(1); var cleanup = Task.Run(() => RadarReader.Cleanup()); }
     if (DateTimeOffset.UtcNow >= nextRadar) RefreshRadar();
     if (settings.RedmineAuto && !redmineBusy && DateTimeOffset.UtcNow >= nextRedmine && WorkDay.Due(DateTime.Now, settings.RedmineLastRun)) RunRedmine();
+    if (settings.RedmineClock && !clockBusy && DateTimeOffset.UtcNow >= nextClock) RefreshTaskClock();
+    UpdateTaskClock();
     if (!busy && DateTimeOffset.UtcNow >= next && settings.Mode.Length > 0) await RefreshUsage();
     UpdateLabels(); Invalidate();
    };
@@ -400,6 +421,41 @@ namespace MeuClaudeWidget {
     : !WorkDay.IsWorkday(now) ? "Hoje não é dia útil: nada será apontado."
     : "Apontamento automático hoje às 17:55.";
    MessageBox.Show(this, text + "\r\n\r\n" + schedule + "\r\nNada foi gravado no Redmine por esta prévia.", "Prévia do apontamento · Redmine");
+  }
+  async void RefreshTaskClock() {
+   if (preview) return;
+   clockBusy = true; nextClock = DateTimeOffset.UtcNow.AddMinutes(3);
+   try {
+    using (var client = RedmineClient.FromMcpConfig())
+     tasks = client == null ? new List<ActiveIssue>() : await AutoLog.Load(client, DateTime.MaxValue);
+   } catch { nextClock = DateTimeOffset.UtcNow.AddMinutes(1); } // keeps the last known issues
+   finally { clockBusy = false; }
+   UpdateTaskClock();
+  }
+  // Recomputes the hours and shows or hides the pill, keeping the strip's right edge in place.
+  void UpdateTaskClock() {
+   bool show = settings.RedmineClock && tasks.Count > 0;
+   if (show) {
+    DateTime now = DateTime.Now;
+    var current = tasks.ToDictionary(t => t.Id, t => new List<StatusSpan> { t.Current });
+    taskTotal = WorkDay.Totals(current, now);
+    taskToday = WorkDay.IsWorkday(now) ? WorkDay.Hours(current, now.Date, now) : current.Keys.ToDictionary(k => k, k => 0.0);
+   }
+   if (show == taskShown) return;
+   int baseLeft = Left + Lead, bottom = Bottom;
+   taskShown = show; Arrange();
+   if (settings.Compact) Left = baseLeft - Lead; else Top = bottom - Height;
+   PinCompact();
+  }
+  void OpenTask() {
+   var task = CurrentTask; if (task == null) return;
+   try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(task.Url) { UseShellExecute = true }); } catch { }
+  }
+  string TaskLine(ActiveIssue t, DateTime now) {
+   double total, today; taskTotal.TryGetValue(t.Id, out total); taskToday.TryGetValue(t.Id, out today);
+   string line = "#" + t.Id + " · " + WorkDay.Duration(total) + " em andamento desde " + WorkDay.SinceLabel(t.Current.Start, now) + " · hoje " + WorkDay.Duration(today);
+   if (t.Estimated >= 0) line += " · estimativa " + WorkDay.Amount(t.Estimated);
+   return line + " · apontado " + WorkDay.Amount(t.Spent);
   }
   void FocusSession(string id) {
    SessionInfo s = sessions.Find(x=>x.Id==id);
@@ -530,11 +586,11 @@ namespace MeuClaudeWidget {
     Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013); // no move/size/activate
   }
   void RememberPosition() {
-   if (settings.Compact) { settings.CompactX = Left; settings.CompactY = Top; }
+   if (settings.Compact) { settings.CompactX = Left + Lead; settings.CompactY = Top; }
    else { settings.X = Left; settings.Y = Top; }
   }
   void RestorePosition() {
-   int x = settings.Compact ? settings.CompactX : settings.X;
+   int x = settings.Compact ? (settings.CompactX == -10000 ? -10000 : settings.CompactX - Lead) : settings.X;
    int y = settings.Compact ? settings.CompactY : settings.Y;
    if (x != -10000) {
     var rect = new Rectangle(x,y,Width,Height);
@@ -571,23 +627,25 @@ namespace MeuClaudeWidget {
   void Arrange() {
    compactItem.Checked = settings.Compact;
    title.Visible = actions.Visible = state.Visible = timestamp.Visible = compactButton.Visible = radarSummary.Visible = !settings.Compact;
+   taskLabel.Visible = !settings.Compact && taskShown;
    BackColor = settings.Compact ? Color.FromArgb(36,37,39) : Color.FromArgb(27,29,32);
    Region oldRegion = Region;
    if (settings.Compact) {
-    ClientSize = new Size(Px(540),Px(40));
+    ClientSize = new Size(Px(540)+Lead,Px(40));
     using (var shape = Rounded(new RectangleF(0,0,Width,Height),Px(8))) Region = new Region(shape);
     if (oldRegion != null) oldRegion.Dispose();
     UpdateLabels(); Invalidate(); return;
    }
    Region = null; if (oldRegion != null) oldRegion.Dispose();
-   int count = Math.Max(2, buckets.Count); ClientSize = new Size(Px(370), Px(240 + count * 88));
+   int count = Math.Max(2, buckets.Count), extra = taskShown ? 50 : 0; ClientSize = new Size(Px(370), Px(240 + extra + count * 88));
    title.SetBounds(Px(18),Px(17),Px(145),Px(27));
    actions.SetBounds(Px(155),Px(15),Px(204),Px(32));
    foreach (Control b in actions.Controls) { b.Width = Px(b.Text == "×" ? 27 : 78); b.Height = Px(28); }
-   radarSummary.SetBounds(Px(18),Px(60 + count * 88),Px(334),Px(92));
-   state.SetBounds(Px(18),Px(160 + count * 88),Px(334),Px(36));
-   timestamp.SetBounds(Px(18),Px(201 + count * 88),Px(224),Px(32));
-   compactButton.SetBounds(Px(250),Px(201 + count * 88),Px(102),Px(28));
+   taskLabel.SetBounds(Px(18),Px(60 + count * 88),Px(334),Px(42));
+   radarSummary.SetBounds(Px(18),Px(60 + extra + count * 88),Px(334),Px(92));
+   state.SetBounds(Px(18),Px(160 + extra + count * 88),Px(334),Px(36));
+   timestamp.SetBounds(Px(18),Px(201 + extra + count * 88),Px(224),Px(32));
+   compactButton.SetBounds(Px(250),Px(201 + extra + count * 88),Px(102),Px(28));
    Invalidate();
   }
   void UpdateLabels() {
@@ -599,6 +657,15 @@ namespace MeuClaudeWidget {
    radarSummary.Text = RadarTitle()+"\n"+gitInfo.Summary+"\n"+usage;
    var summary = new StringBuilder("Meu Claude\n");
    summary.Append(RadarDetails()).Append("\n\n");
+   if (taskShown && CurrentTask != null) {
+    DateTime now = DateTime.Now; var task = CurrentTask; double total;
+    taskTotal.TryGetValue(task.Id, out total);
+    string subject = task.Subject.Length > 48 ? task.Subject.Substring(0, 48) + "…" : task.Subject;
+    taskLabel.Text = "#" + task.Id + " · " + WorkDay.Duration(total) + " em andamento · desde " + WorkDay.SinceLabel(task.Current.Start, now) + "\n" + subject;
+    summary.Append("Redmine (horário de trabalho)\n");
+    foreach (var t in tasks.OrderByDescending(x => x.Current.Start)) summary.Append(TaskLine(t, now)).Append("\n");
+    summary.Append("\n");
+   }
    for (int i = 0; i < buckets.Count; i++) {
     Bucket b = buckets[i];
     summary.Append(b.Title).Append(": ").Append(b.Percent.HasValue ? Data.Percent(b.Percent.Value) : "—").Append("\n").Append(Data.ResetLabel(b)).Append("\n");
@@ -744,8 +811,19 @@ namespace MeuClaudeWidget {
      string caption = stale && last.HasValue ? "leitura antiga" : runsOut ? "esgota " + Pace.When(when).Replace("às ","") : ShortReset(b);
      TextRenderer.DrawText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),runsOut ? red : Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
+    // Third pill: working hours on the Redmine issue in progress since it entered "Em andamento".
+    var task = taskShown ? CurrentTask : null;
+    if (task != null) {
+     int x = Px(256), y = Px(5), w = Px(116), h = Px(16); double total; taskTotal.TryGetValue(task.Id, out total);
+     using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
+     TextRenderer.DrawText(g,"#"+task.Id,normal,new Rectangle(x+Px(8),y,w-Px(8),h),green,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     TextRenderer.DrawText(g,WorkDay.Duration(total),bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+     string since = "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
+     TextRenderer.DrawText(g,since,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    }
+    int lead = Lead;
     using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i=0;i<3;i++) g.FillEllipse(dots,Width-Px(21-i*4),Px(11),Px(2),Px(2));
-    using (var divider = new Pen(Color.FromArgb(65,67,70))) g.DrawLine(divider,Px(254),Px(7),Px(254),Px(33));
+    using (var divider = new Pen(Color.FromArgb(65,67,70))) g.DrawLine(divider,Px(254)+lead,Px(7),Px(254)+lead,Px(33));
     // Badges count the other active sessions: amber needs you, accent is working.
     var others = OtherActive();
     int waiting = others.Count(s=>s.State=="waiting");
@@ -757,9 +835,9 @@ namespace MeuClaudeWidget {
      using (var brush = new SolidBrush(badges[i].Value)) g.FillEllipse(brush,area);
      TextRenderer.DrawText(g,Math.Min(9,badges[i].Key).ToString(CultureInfo.InvariantCulture),tiny,area,Color.FromArgb(27,29,32),TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
     }
-    int radarWidth = Width-Px(298)-badges.Count*Px(17);
+    int radarWidth = Width-Px(298)-lead-badges.Count*Px(17);
     string headline = activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
-    TextRenderer.DrawText(g,headline,normal,new Rectangle(Px(264),Px(3),radarWidth,Px(17)),StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    TextRenderer.DrawText(g,headline,normal,new Rectangle(Px(264)+lead,Px(3),radarWidth,Px(17)),StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     var detail = new List<string>();
     if (activeSession != null) {
      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
@@ -767,7 +845,7 @@ namespace MeuClaudeWidget {
      if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
     }
     detail.Add(gitInfo.Summary);
-    TextRenderer.DrawText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264),Px(23),Width-Px(298),Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    TextRenderer.DrawText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead,Px(23),Width-Px(298)-lead,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
     using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,Width-Px(17),Px(27),Px(4),Px(4));
    }
@@ -825,6 +903,10 @@ namespace MeuClaudeWidget {
    };
    activeSession = sessions[0];
    gitInfo = new GitInfo { Branch = "main", Files = 5, Added = 120, Removed = 34, LinesKnown = true };
+   DateTime local = DateTime.Now;
+   tasks = new List<ActiveIssue> { new ActiveIssue { Id = 1234, Subject = "Tarefa de exemplo", Url = "https://example.invalid/issues/1234",
+    Spans = new List<StatusSpan> { new StatusSpan { Start = local.Date.AddDays(-1).AddHours(17).AddMinutes(14), End = DateTime.MaxValue } }, Estimated = 4, Spent = 4.5 } };
+   UpdateTaskClock();
    Arrange(); UpdateLabels();
   }
  }
@@ -940,6 +1022,12 @@ namespace MeuClaudeWidget {
    if (WorkDay.Round(3.8 - 2) != 2 || WorkDay.Round(4 - 4) != 0) throw new Exception("Falha: Redmine desconto do já apontado.");
    if (!WorkDay.Due(day.AddHours(17).AddMinutes(55), "") || WorkDay.Due(day.AddHours(17).AddMinutes(54), "") || WorkDay.Due(day.AddHours(18), "2026-11-04") || WorkDay.Due(new DateTime(2026,11,7,18,0,0), ""))
     throw new Exception("Falha: Redmine horário de execução.");
+   // Live clock: from yesterday 15:00 until today 10:00 = 3h + 2h; Friday 17:00 → Monday 09:00 skips the weekend.
+   var open = new Dictionary<int,List<StatusSpan>> { { 1, new List<StatusSpan> { new StatusSpan { Start = day.AddDays(-1).AddHours(15), End = DateTime.MaxValue } } } };
+   if (Math.Abs(WorkDay.Totals(open, day.AddHours(10))[1]-5) > 1e-9) throw new Exception("Falha: relógio Redmine entre dias.");
+   open[1][0].Start = new DateTime(2026,11,6,17,0,0);
+   if (Math.Abs(WorkDay.Totals(open, new DateTime(2026,11,9,9,0,0))[1]-2) > 1e-9) throw new Exception("Falha: relógio Redmine no fim de semana.");
+   if (Math.Abs(WorkDay.Totals(open, new DateTime(2026,11,9,12,30,0))[1]-5) > 1e-9) throw new Exception("Falha: relógio Redmine no almoço.");
    return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos, DPAPI, ritmo de uso, atividade das sessões e cálculo de horas do Redmine. Nenhuma requisição foi feita.";
   }
  }

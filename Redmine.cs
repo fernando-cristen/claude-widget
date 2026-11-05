@@ -17,6 +17,13 @@ namespace MeuClaudeWidget {
   public int Issue; public string Subject = ""; public DateTime Since;
   public double Raw, Logged, Hours; public bool Posted;
  }
+ // An issue of mine currently in "Em andamento", with its history of in-progress spans.
+ public class ActiveIssue {
+  public int Id; public string Subject = "", Url = "";
+  public List<StatusSpan> Spans = new List<StatusSpan>();
+  public double Estimated = -1, Spent;
+  public StatusSpan Current { get { return Spans[Spans.Count-1]; } }
+ }
 
  // Workday 08:00–12:00 and 13:12–18:00 (local time), Monday to Friday. Runs at 17:55.
  public static class WorkDay {
@@ -50,12 +57,16 @@ namespace MeuClaudeWidget {
 
   // Hours of each issue inside the day's windows. When two issues overlap,
   // the time goes to the one that entered "Em andamento" last, so no minute counts twice.
-  public static Dictionary<int,double> Hours(Dictionary<int,List<StatusSpan>> spans, DateTime day) {
+  public static Dictionary<int,double> Hours(Dictionary<int,List<StatusSpan>> spans, DateTime day) { return Hours(spans, day, DateTime.MaxValue); }
+  // Same, counting only up to "until" (used by the live clock).
+  public static Dictionary<int,double> Hours(Dictionary<int,List<StatusSpan>> spans, DateTime day, DateTime until) {
    var result = spans.Keys.ToDictionary(k => k, k => 0.0);
-   var cuts = new List<DateTime>();
+   DateTime lo = day.Date + Windows[0][0], hi = DayEnd(day); if (until < hi) hi = until;
+   if (hi <= lo) return result;
+   var cuts = new List<DateTime> { lo, hi };
    foreach (var w in Windows) { cuts.Add(day.Date + w[0]); cuts.Add(day.Date + w[1]); }
    foreach (var l in spans.Values) foreach (var s in l) { cuts.Add(s.Start); cuts.Add(s.End); }
-   cuts = cuts.Distinct().OrderBy(x => x).ToList();
+   cuts = cuts.Where(t => t >= lo && t <= hi).Distinct().OrderBy(x => x).ToList();
    for (int i = 0; i + 1 < cuts.Count; i++) {
     DateTime a = cuts[i], b = cuts[i+1], mid = a + TimeSpan.FromTicks((b - a).Ticks / 2);
     if (!InWindow(mid, day)) continue;
@@ -65,6 +76,18 @@ namespace MeuClaudeWidget {
     if (found) result[owner] += (b - a).TotalHours;
    }
    return result;
+  }
+  // Working hours of each issue from the start of its spans until now, across days (workdays only).
+  public static Dictionary<int,double> Totals(Dictionary<int,List<StatusSpan>> spans, DateTime now) {
+   var total = spans.Keys.ToDictionary(k => k, k => 0.0);
+   var starts = spans.Values.SelectMany(l => l).Select(s => s.Start).ToList();
+   if (starts.Count == 0) return total;
+   for (DateTime d = starts.Min().Date; d <= now.Date; d = d.AddDays(1))
+    if (IsWorkday(d)) foreach (var pair in Hours(spans, d, now)) total[pair.Key] += pair.Value;
+   return total;
+  }
+  public static string SinceLabel(DateTime since, DateTime now) {
+   return since.Date == now.Date ? since.ToString("HH:mm") : since.ToString("dd/MM HH:mm");
   }
   static bool InWindow(DateTime t, DateTime day) {
    foreach (var w in Windows) if (t >= day.Date + w[0] && t < day.Date + w[1]) return true;
@@ -149,12 +172,10 @@ namespace MeuClaudeWidget {
   static double Number(object value) {
    double n; return Double.TryParse(Data.Str(value), NumberStyles.Float, CultureInfo.InvariantCulture, out n) ? n : 0;
   }
-  // What would be logged today for the issues assigned to me that are in "Em andamento".
-  // Open spans run until 18:00; hours already logged today on the issue are discounted.
-  public static async Task<List<LogItem>> Plan(RedmineClient api, DateTime now) {
-   DateTime day = now.Date; string today = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+  // Issues assigned to me in "Em andamento", with their in-progress spans; the open span ends at openEnd.
+  public static async Task<List<ActiveIssue>> Load(RedmineClient api, DateTime openEnd) {
    var list = await api.Get("/issues.json?assigned_to_id=me&status_id=" + WorkDay.InProgress + "&limit=100");
-   var spans = new Dictionary<int,List<StatusSpan>>(); var items = new List<LogItem>();
+   var result = new List<ActiveIssue>();
    foreach (var raw in RedmineClient.Items(Data.Get(list, "issues"))) {
     int id = (int)Number(Data.Get(Data.Map(raw), "id")); if (id <= 0) continue;
     var issue = Data.Map(Data.Get(await api.Get("/issues/" + id + ".json?include=journals"), "issue"));
@@ -168,11 +189,21 @@ namespace MeuClaudeWidget {
      }
     }
     string status = Data.Str(Data.Get(Data.Map(Data.Get(issue, "status")), "id"));
-    var s = WorkDay.Spans(changes, Local(Data.Get(issue, "created_on")), status, WorkDay.DayEnd(day));
+    var s = WorkDay.Spans(changes, Local(Data.Get(issue, "created_on")), status, openEnd);
     if (s.Count == 0) continue;
-    spans[id] = s;
-    items.Add(new LogItem { Issue = id, Subject = Data.Str(Data.Get(issue, "subject")), Since = s[s.Count-1].Start });
+    object estimate = Data.Get(issue, "estimated_hours");
+    result.Add(new ActiveIssue { Id = id, Subject = Data.Str(Data.Get(issue, "subject")), Url = api.IssueUrl(id), Spans = s,
+     Estimated = estimate == null ? -1 : Number(estimate), Spent = Number(Data.Get(issue, "spent_hours")) });
    }
+   return result;
+  }
+  // What would be logged today for the issues assigned to me that are in "Em andamento".
+  // Open spans run until 18:00; hours already logged today on the issue are discounted.
+  public static async Task<List<LogItem>> Plan(RedmineClient api, DateTime now) {
+   DateTime day = now.Date; string today = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+   var active = await Load(api, WorkDay.DayEnd(day));
+   var spans = active.ToDictionary(a => a.Id, a => a.Spans);
+   var items = active.Select(a => new LogItem { Issue = a.Id, Subject = a.Subject, Since = a.Current.Start }).ToList();
    var hours = WorkDay.Hours(spans, day);
    foreach (var item in items) {
     item.Raw = hours[item.Issue];
@@ -196,9 +227,7 @@ namespace MeuClaudeWidget {
    }
    return items;
   }
-  public static string Since(LogItem item, DateTime now) {
-   return item.Since.Date == now.Date ? item.Since.ToString("HH:mm") : item.Since.ToString("dd/MM HH:mm");
-  }
+  public static string Since(LogItem item, DateTime now) { return WorkDay.SinceLabel(item.Since, now); }
   public static string Describe(List<LogItem> items, DateTime now) {
    if (items.Count == 0) return "Nenhuma tarefa sua em andamento agora. Nada seria apontado.";
    var text = new StringBuilder();

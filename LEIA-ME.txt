@@ -232,6 +232,16 @@ nem salva a chave. Sem o servidor "redmine" no mcp-config.json, nada acontece.
 Limitações: só funciona com o widget aberto; feriados não são detectados;
 uma tarefa esquecida em andamento conta até as 18:00.
 
+HORAS DA TAREFA EM ANDAMENTO
+Uma terceira pílula na faixa compacta (verde, #número) mostra há quantas
+horas de TRABALHO a tarefa está em andamento: desde que entrou no status,
+contando só 08:00–12:00 e 13:12–18:00, de segunda a sexta. Embaixo: desde
+quando. Clique nela para abrir a tarefa no navegador. A dica do mouse mostra
+também as horas de hoje, a estimativa e o já apontado. A lista de tarefas é
+consultada a cada 3 min; as horas avançam a cada segundo. Sem tarefa em
+andamento, a pílula some e a faixa volta ao tamanho normal.
+Menu › Redmine › "Mostrar horas da tarefa em andamento" liga/desliga.
+
 PRIVACIDADE E FUNCIONAMENTO
 Código próprio em Widget.cs, Radar.cs e Redmine.cs. Iniciar.ps1 compila-os e guarda o
 resultado em %LOCALAPPDATA%\MeuClaudeWidget\bin.
