@@ -897,8 +897,8 @@ namespace MeuClaudeWidget {
    for (int m = 300; m >= 0; m -= 10) history.Add(new Reading { T = now.AddMinutes(-m).ToUnixTimeSeconds(), P5 = Math.Max(0, 62-m*0.35), P7 = 31-m*0.01 });
    last = now; stale = false; status = "Conectado · login atual do Claude Code";
    sessions = new List<SessionInfo> {
-    new SessionInfo { Id = "a1b2c3d4e5", Cwd = @"C:\workspace\panoverse-backend", State = "working", Event = "PreToolUse", Tool = "Bash", Updated = now.ToString("o"), TurnStarted = now.AddMinutes(-4).ToString("o"), Subagents = 2, Model = "Opus 5.5", Context = 42, Cost = 1.23 },
-    new SessionInfo { Id = "f6e5d4c3b2", Cwd = @"C:\workspace\admin-panorama", State = "waiting", Event = "PermissionRequest", Tool = "Edit", Updated = now.AddMinutes(-1).ToString("o") },
+    new SessionInfo { Id = "a1b2c3d4e5", Cwd = @"C:\workspace\api-backend", State = "working", Event = "PreToolUse", Tool = "Bash", Updated = now.ToString("o"), TurnStarted = now.AddMinutes(-4).ToString("o"), Subagents = 2, Model = "Opus 5.5", Context = 42, Cost = 1.23 },
+    new SessionInfo { Id = "f6e5d4c3b2", Cwd = @"C:\workspace\painel-admin", State = "waiting", Event = "PermissionRequest", Tool = "Edit", Updated = now.AddMinutes(-1).ToString("o") },
     new SessionInfo { Id = "0918273645", Cwd = @"C:\workspace\site", State = "working", Event = "PostToolUse", Updated = now.ToString("o"), TurnStarted = now.AddSeconds(-40).ToString("o") }
    };
    activeSession = sessions[0];
