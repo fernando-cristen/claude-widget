@@ -43,6 +43,7 @@ namespace MeuClaudeWidget {
   public bool MorningBrief = true;
   public string BriefingShown = "";
   public bool DockTaskbar = true;
+  public bool Animations = true, Sounds = true;
   public string DockSide = "auto"; // auto, left (next to the weather), right (next to the clock)
  }
  public class Bucket {
@@ -307,6 +308,9 @@ namespace MeuClaudeWidget {
   BriefingForm briefForm; bool briefBusy; readonly DateTimeOffset startedAt = DateTimeOffset.UtcNow;
   // Fixed in the taskbar like the weather button: free room measured every 2 s, taskbar color, dense layout when narrow.
   TaskbarSlot slot; bool slotBusy, hovering; IntPtr foregroundHook; DateTimeOffset nextSlot = DateTimeOffset.MinValue; Color dockBack = Color.Empty, dockLeft = Color.Empty, dockRight = Color.Empty; int dockWidth;
+  // Living strip: animated status orb and light effects (30 fps only while something moves).
+  readonly Ambient ambient = new Ambient();
+  readonly System.Windows.Forms.Timer ambientTimer = new System.Windows.Forms.Timer { Interval = 33 };
   bool Docked { get { return !preview && settings.Compact && settings.DockTaskbar && slot != null; } }
   int FullWidth { get { return Px(540) + Lead; } }
   bool Dense { get { return settings.Compact && Width < FullWidth - Px(2); } }
@@ -373,6 +377,12 @@ namespace MeuClaudeWidget {
    var usageItem = new ToolStripMenuItem("Avisar uso alto (80% / 95%) e renovação") { Checked = settings.UsageAlerts, CheckOnClick = true };
    usageItem.CheckedChanged += delegate { settings.UsageAlerts = usageItem.Checked; TrySave(); };
    menu.Items.Add(usageItem);
+   var soundItem = new ToolStripMenuItem("Sons ao terminar / precisar de você") { Checked = settings.Sounds, CheckOnClick = true };
+   soundItem.CheckedChanged += delegate { settings.Sounds = soundItem.Checked; TrySave(); if (soundItem.Checked) Chime.Play(false); };
+   menu.Items.Add(soundItem);
+   var animItem = new ToolStripMenuItem("Animações na faixa") { Checked = settings.Animations, CheckOnClick = true };
+   animItem.CheckedChanged += delegate { settings.Animations = animItem.Checked; TrySave(); UpdateAmbient(); Invalidate(); };
+   menu.Items.Add(animItem);
    var redmineMenu = new ToolStripMenuItem("Redmine");
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
    redmineAuto.CheckedChanged += delegate { settings.RedmineAuto = redmineAuto.Checked; TrySave(); };
@@ -413,6 +423,7 @@ namespace MeuClaudeWidget {
    tray.DoubleClick += delegate { Show(); Activate(); };
    tray.BalloonTipClicked += delegate { if (balloonAction != null) balloonAction(); else if (balloonSession != null) FocusSession(balloonSession); };
    anim.Tick += delegate { AnimateConfetti(); };
+   ambientTimer.Tick += delegate { if (stopped || !settings.Animations || !settings.Compact || !ambient.Animating(DateTime.Now)) ambientTimer.Stop(); Invalidate(); };
    UpdateTray();
    state.Click += delegate { ShowStatusTip(); };
    AttachDrag(this); AttachDrag(title);
@@ -460,7 +471,7 @@ namespace MeuClaudeWidget {
     foregroundHook = Taskbar.WatchForeground(OnForeground);
     timer.Start(); if (settings.Mode.Length == 0) Configure(); else await RefreshUsage();
    };
-   FormClosing += delegate { stopped = true; timer.Stop(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); menu.Dispose(); hint.Dispose(); };
+   FormClosing += delegate { stopped = true; timer.Stop(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
   }
   void Balloon(string caption, string text, string session) { balloonSession = session; balloonAction = null; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
   static void OpenUrl(string url) {
@@ -842,15 +853,26 @@ namespace MeuClaudeWidget {
    radarBusy=true;
    try {
     var found=await Task.Run(()=>RadarReader.Read()); if(stopped)return;
+    int chime = 0; // 1 = done, 2 = needs you (wins)
     foreach(var session in found) {
      string prior; observed.TryGetValue(session.Id,out prior);
-     if(radarWarmed && settings.RadarAlerts && prior!=session.Effective && DateTimeOffset.UtcNow-session.Time<TimeSpan.FromSeconds(15) && (session.Effective=="waiting"||session.Effective=="done"))
+     bool fresh = radarWarmed && prior!=session.Effective && DateTimeOffset.UtcNow-session.Time<TimeSpan.FromSeconds(15) && (session.Effective=="waiting"||session.Effective=="done");
+     if(fresh && settings.RadarAlerts)
       Balloon("Claude · "+session.Project,session.Activity+(session.WindowPid>0 ? "\nClique para ir ao terminal." : ""),session.Id);
+     if(fresh) chime = Math.Max(chime, session.Effective=="waiting" ? 2 : 1);
      observed[session.Id]=session.Effective;
     }
-    radarWarmed=true; sessions=found; SelectSession(); UpdateLabels(); Invalidate(); RefreshGit();
+    if(chime > 0 && settings.Sounds) Chime.Play(chime == 2);
+    radarWarmed=true; sessions=found; SelectSession(); UpdateLabels(); UpdateAmbient(); Invalidate(); RefreshGit();
    } catch { gitInfo=new GitInfo { Error="Radar local indisponível" }; }
    finally { radarBusy=false; nextRadar=DateTimeOffset.UtcNow.AddSeconds(2); }
+  }
+  // State of the followed session drives the orb; the 30 fps timer only runs while something is moving.
+  void UpdateAmbient() {
+   string next = activeSession == null || activeSession.Silent ? "idle" : activeSession.Effective;
+   if (next != "working" && next != "background" && next != "waiting" && next != "done" && next != "error") next = "idle";
+   DateTime now = DateTime.Now; ambient.Update(next, now);
+   if (settings.Animations && settings.Compact && !preview && ambient.Animating(now)) { if (!ambientTimer.Enabled) ambientTimer.Start(); }
   }
   async void RefreshGit() {
    if(gitBusy||stopped||activeSession==null||DateTimeOffset.UtcNow<nextGit)return;
@@ -1123,7 +1145,9 @@ namespace MeuClaudeWidget {
     }
     bool celebrating = DateTime.Now < bannerUntil;
     string headline = celebrating ? banner : activeSession == null ? "Radar · aguardando" : activeSession.Project + " · " + activeSession.Label;
-    TextRenderer.DrawText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X, Px(4), radar.Width, Px(15)), celebrating ? amber : StateColor(activeSession), flags);
+    int orb = settings.Animations ? Px(15) : 0;
+    if (orb > 0) ambient.PaintOrb(g, radar.X + Px(5), Px(11.5f), ScaleFactor, DateTime.Now);
+    TextRenderer.DrawText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : StateColor(activeSession), flags);
     var detail = new List<string>();
     if (activeSession != null) {
      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
@@ -1195,7 +1219,9 @@ namespace MeuClaudeWidget {
     int radarWidth = Width-Px(298)-lead-badges.Count*Px(17);
     bool celebrating = DateTime.Now < bannerUntil;
     string headline = celebrating ? banner : activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
-    TextRenderer.DrawText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead,Px(3),radarWidth,Px(17)),celebrating ? amber : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    int orb = settings.Animations ? Px(15) : 0;
+    if (orb > 0) ambient.PaintOrb(g, Px(269)+lead, Px(11.5f), ScaleFactor, DateTime.Now);
+    TextRenderer.DrawText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     var detail = new List<string>();
     if (activeSession != null) {
      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
@@ -1219,7 +1245,11 @@ namespace MeuClaudeWidget {
   }
   protected override void OnPaint(PaintEventArgs e) {
    base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-   if (settings.Compact) { PaintCompact(g); PaintConfetti(g); return; }
+   if (settings.Compact) {
+    PaintCompact(g);
+    if (settings.Animations) ambient.PaintEdge(g, ClientRectangle, ScaleFactor, Px(7), DateTime.Now);
+    PaintConfetti(g); return;
+   }
    PaintFull(g); PaintConfetti(g);
   }
   void PaintFull(Graphics g) {

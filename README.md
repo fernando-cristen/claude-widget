@@ -252,6 +252,18 @@ para ver tudo. A qualquer hora: Menu › Redmine › "Bom dia: onde parei…".
 Os transcripts são lidos só no seu computador (apenas o final do arquivo).
 Menu › Redmine › "Resumo de bom dia ao abrir" liga/desliga.
 
+FAIXA VIVA E SONS
+Ao lado do nome do projeto há um orbe que mostra o estado da sessão seguida:
+• Trabalhando: laranja, respira e tem um arco girando; um cometa de luz
+  corre pela base da faixa.
+• Precisa de você: âmbar, solta ondas e a borda da faixa respira.
+• Terminou: onda verde e uma varredura de luz; depois fica calmo.
+• Erro: vermelho. Parado: cinza.
+Sons gerados pelo próprio widget (sem arquivos): um "ding-ding" quando uma
+sessão termina e um arpejo de três notas quando precisa de você.
+Menu: "Animações na faixa" e "Sons ao terminar / precisar de você" (ligados
+por padrão). A animação só roda enquanto algo está mudando.
+
 FIXO NA BARRA DE TAREFAS (COMO O CLIMA)
 No modo compacto, a faixa fica presa na barra de tarefas, num espaço livre:
 ao lado do clima ou perto do relógio. Ela não arrasta; o Windows decide o
@@ -271,7 +283,7 @@ suportada (volta ao modo livre). Os ícones da barra são lidos pelo UI
 Automation do próprio Windows, só para medir o espaço livre.
 
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs
+Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs, Vida.cs
 e Ui.cs (o kit visual das janelas: barra de título escura do Windows 11, ícones
 Segoe Fluent, fonte Segoe UI Variable). Iniciar.ps1 compila-os em memória.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.
