@@ -289,7 +289,7 @@ namespace MeuClaudeWidget {
   bool redmineBusy; DateTimeOffset nextRedmine = DateTimeOffset.MinValue; string redmineErrorDay = "";
   // Live clock of the Redmine issue in progress: issues refresh every 3 minutes, hours are recomputed every second.
   List<ActiveIssue> tasks = new List<ActiveIssue>(); bool taskShown, clockBusy; DateTimeOffset nextClock = DateTimeOffset.MinValue;
-  Dictionary<int,double> taskTotal = new Dictionary<int,double>(), taskToday = new Dictionary<int,double>();
+  Dictionary<int,double> taskTotal = new Dictionary<int,double>(), taskToday = new Dictionary<int,double>(); string clockStamp = "";
   Label taskLabel;
   ActiveIssue CurrentTask { get { return tasks.Count == 0 ? null : tasks.OrderBy(t => t.Current.Start).Last(); } }
   // Extra width of the compact strip taken by the task pill; positions are saved without it.
@@ -435,11 +435,13 @@ namespace MeuClaudeWidget {
   // Recomputes the hours and shows or hides the pill, keeping the strip's right edge in place.
   void UpdateTaskClock() {
    bool show = settings.RedmineClock && tasks.Count > 0;
-   if (show) {
-    DateTime now = DateTime.Now;
-    var current = tasks.ToDictionary(t => t.Id, t => new List<StatusSpan> { t.Current });
-    taskTotal = WorkDay.Totals(current, now);
-    taskToday = WorkDay.IsWorkday(now) ? WorkDay.Hours(current, now.Date, now) : current.Keys.ToDictionary(k => k, k => 0.0);
+   DateTime now = DateTime.Now; string stamp = now.ToString("yyyyMMddHHmm") + tasks.GetHashCode();
+   if (show && stamp != clockStamp) {
+    // Every "Em andamento" period counts; time in any other status (pausa, aguardando terceiros, feedback…) does not.
+    clockStamp = stamp;
+    var spans = tasks.ToDictionary(t => t.Id, t => t.Spans);
+    taskTotal = WorkDay.Totals(spans, now);
+    taskToday = WorkDay.IsWorkday(now) ? WorkDay.Hours(spans, now.Date, now) : spans.Keys.ToDictionary(k => k, k => 0.0);
    }
    if (show == taskShown) return;
    int baseLeft = Left + Lead, bottom = Bottom;
@@ -451,9 +453,10 @@ namespace MeuClaudeWidget {
    var task = CurrentTask; if (task == null) return;
    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(task.Url) { UseShellExecute = true }); } catch { }
   }
+  static string Periods(ActiveIssue t) { return t.Spans.Count == 1 ? "1 período" : t.Spans.Count + " períodos"; }
   string TaskLine(ActiveIssue t, DateTime now) {
    double total, today; taskTotal.TryGetValue(t.Id, out total); taskToday.TryGetValue(t.Id, out today);
-   string line = "#" + t.Id + " · " + WorkDay.Duration(total) + " em andamento desde " + WorkDay.SinceLabel(t.Current.Start, now) + " · hoje " + WorkDay.Duration(today);
+   string line = "#" + t.Id + " · " + WorkDay.Duration(total) + " em andamento (" + Periods(t) + ", atual desde " + WorkDay.SinceLabel(t.Current.Start, now) + ") · hoje " + WorkDay.Duration(today);
    if (t.Estimated >= 0) line += " · estimativa " + WorkDay.Amount(t.Estimated);
    return line + " · apontado " + WorkDay.Amount(t.Spent);
   }
@@ -661,7 +664,7 @@ namespace MeuClaudeWidget {
     DateTime now = DateTime.Now; var task = CurrentTask; double total;
     taskTotal.TryGetValue(task.Id, out total);
     string subject = task.Subject.Length > 48 ? task.Subject.Substring(0, 48) + "…" : task.Subject;
-    taskLabel.Text = "#" + task.Id + " · " + WorkDay.Duration(total) + " em andamento · desde " + WorkDay.SinceLabel(task.Current.Start, now) + "\n" + subject;
+    taskLabel.Text = "#" + task.Id + " · " + WorkDay.Duration(total) + " em andamento · " + Periods(task) + " · atual desde " + WorkDay.SinceLabel(task.Current.Start, now) + "\n" + subject;
     summary.Append("Redmine (horário de trabalho)\n");
     foreach (var t in tasks.OrderByDescending(x => x.Current.Start)) summary.Append(TaskLine(t, now)).Append("\n");
     summary.Append("\n");
@@ -818,7 +821,7 @@ namespace MeuClaudeWidget {
      using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
      TextRenderer.DrawText(g,"#"+task.Id,normal,new Rectangle(x+Px(8),y,w-Px(8),h),green,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      TextRenderer.DrawText(g,WorkDay.Duration(total),bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     string since = "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
+     string since = (task.Spans.Count > 1 ? task.Spans.Count + "x · " : "") + "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
      TextRenderer.DrawText(g,since,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
     int lead = Lead;
@@ -905,7 +908,8 @@ namespace MeuClaudeWidget {
    gitInfo = new GitInfo { Branch = "main", Files = 5, Added = 120, Removed = 34, LinesKnown = true };
    DateTime local = DateTime.Now;
    tasks = new List<ActiveIssue> { new ActiveIssue { Id = 1234, Subject = "Tarefa de exemplo", Url = "https://example.invalid/issues/1234",
-    Spans = new List<StatusSpan> { new StatusSpan { Start = local.Date.AddDays(-1).AddHours(17).AddMinutes(14), End = DateTime.MaxValue } }, Estimated = 4, Spent = 4.5 } };
+    Spans = new List<StatusSpan> { new StatusSpan { Start = local.Date.AddDays(-1).AddHours(9), End = local.Date.AddDays(-1).AddHours(11) },
+     new StatusSpan { Start = local.Date.AddDays(-1).AddHours(17).AddMinutes(14), End = DateTime.MaxValue } }, Estimated = 4, Spent = 4.5 } };
    UpdateTaskClock();
    Arrange(); UpdateLabels();
   }
@@ -1028,6 +1032,15 @@ namespace MeuClaudeWidget {
    open[1][0].Start = new DateTime(2026,11,6,17,0,0);
    if (Math.Abs(WorkDay.Totals(open, new DateTime(2026,11,9,9,0,0))[1]-2) > 1e-9) throw new Exception("Falha: relógio Redmine no fim de semana.");
    if (Math.Abs(WorkDay.Totals(open, new DateTime(2026,11,9,12,30,0))[1]-5) > 1e-9) throw new Exception("Falha: relógio Redmine no almoço.");
+   // All periods add up; "Em pausa" and "Aguardando terceiros" do not: yesterday 16–18 (2h) + today 08–09 (1h) + 14–16 (2h) = 5h.
+   var changes = new[] {
+    new StatusChange { When = day.AddDays(-1).AddHours(16), Old = "1", New = "2" },
+    new StatusChange { When = day.AddHours(9), Old = "2", New = "8" },
+    new StatusChange { When = day.AddHours(10), Old = "8", New = "2" }, new StatusChange { When = day.AddHours(10), Old = "2", New = "7" },
+    new StatusChange { When = day.AddHours(14), Old = "7", New = "2" } };
+   var periods = WorkDay.Spans(changes, day.AddDays(-5), "2", DateTime.MaxValue);
+   if (periods.Count != 2 || Math.Abs(WorkDay.Totals(new Dictionary<int,List<StatusSpan>> { { 1, periods } }, day.AddHours(16))[1]-5) > 1e-9)
+    throw new Exception("Falha: relógio Redmine somando períodos com pausas.");
    return "OK: zero, dados ausentes, modelos, datas, resposta inválida, limites numéricos, DPAPI, ritmo de uso, atividade das sessões e cálculo de horas do Redmine. Nenhuma requisição foi feita.";
   }
  }

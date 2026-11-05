@@ -234,9 +234,11 @@ uma tarefa esquecida em andamento conta até as 18:00.
 
 HORAS DA TAREFA EM ANDAMENTO
 Uma terceira pílula na faixa compacta (verde, #número) mostra há quantas
-horas de TRABALHO a tarefa está em andamento: desde que entrou no status,
-contando só 08:00–12:00 e 13:12–18:00, de segunda a sexta. Embaixo: desde
-quando. Clique nela para abrir a tarefa no navegador. A dica do mouse mostra
+horas de TRABALHO a tarefa está em andamento: soma TODOS os períodos em
+"Em andamento", contando só 08:00–12:00 e 13:12–18:00, de segunda a sexta.
+Tempo em qualquer outro status (Em pausa, Aguardando terceiros, Feedback…)
+não conta. Embaixo: quantos períodos (2x, 3x…) e desde quando está no atual.
+Clique nela para abrir a tarefa no navegador. A dica do mouse mostra
 também as horas de hoje, a estimativa e o já apontado. A lista de tarefas é
 consultada a cada 3 min; as horas avançam a cada segundo. Sem tarefa em
 andamento, a pílula some e a faixa volta ao tamanho normal.
