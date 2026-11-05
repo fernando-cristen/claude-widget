@@ -17,6 +17,7 @@
   public bool Closed;
   public string Model = "";
   public double Context = -1, Cost = -1;
+  public int Issue; // Redmine issue linked in this session (found by the status line), 0 when none
   static DateTimeOffset? Parse(string value) { DateTimeOffset t; return DateTimeOffset.TryParse(value, out t) ? t : (DateTimeOffset?)null; }
   public DateTimeOffset Time { get { return Parse(Updated) ?? DateTimeOffset.MinValue; } }
   public string Project { get { try { return new DirectoryInfo(Cwd).Name; } catch { return "Projeto"; } } }
@@ -83,7 +84,7 @@
    return (int)value.TotalHours + "h " + value.Minutes + "min";
   }
  }
- public class StatusRecord { public string Model = "", Updated = "", FiveReset = "", WeekReset = ""; public double Context = -1, Cost = -1, Five = -1, Week = -1; }
+ public class StatusRecord { public string Model = "", Updated = "", FiveReset = "", WeekReset = ""; public double Context = -1, Cost = -1, Five = -1, Week = -1; public int Issue; }
  public static class RadarReader {
   static string Dir { get { return Path.Combine(Data.Folder,"radar"); } }
   public static List<SessionInfo> Read() {
@@ -97,7 +98,7 @@
      item.Closed = item.State != "ended" && !Alive(item);
      string status = Path.Combine(dir,"status",item.Id+".json");
      if (File.Exists(status) && new FileInfo(status).Length < 8192) {
-      try { var s = Data.Json().Deserialize<StatusRecord>(File.ReadAllText(status)); if (s != null) { item.Model = s.Model ?? ""; item.Context = s.Context; item.Cost = s.Cost; } } catch { }
+      try { var s = Data.Json().Deserialize<StatusRecord>(File.ReadAllText(status)); if (s != null) { item.Model = s.Model ?? ""; item.Context = s.Context; item.Cost = s.Cost; item.Issue = s.Issue; } } catch { }
      }
      result.Add(item);
     } catch { }
@@ -230,14 +231,14 @@
  public sealed class RadarForm : Form {
   readonly ListView list=new ListView(); readonly TextBox details=new TextBox();
   readonly System.Windows.Forms.Timer clock=new System.Windows.Forms.Timer();
-  readonly Func<List<SessionInfo>> read; readonly Func<string> describe; readonly Action<string> select, focus;
+  readonly Func<List<SessionInfo>> read; readonly Func<string> describe; readonly Action<string> select, focus; readonly Func<SessionInfo,string> task;
   string selected=""; bool updating;
-  public RadarForm(Func<List<SessionInfo>> readSessions,Func<string> description,Action<string> selectSession,Action<string> focusSession) {
-   read=readSessions; describe=description; select=selectSession; focus=focusSession;
+  public RadarForm(Func<List<SessionInfo>> readSessions,Func<string> description,Action<string> selectSession,Action<string> focusSession,Func<SessionInfo,string> taskLabel) {
+   read=readSessions; describe=description; select=selectSession; focus=focusSession; task=taskLabel;
    Text="Claude · projetos e sessões"; Size=new Size(900,510); MinimumSize=new Size(760,440);
    StartPosition=FormStartPosition.CenterParent; Font=new Font("Segoe UI",9); AutoScaleMode=AutoScaleMode.Dpi;
    list.View=View.Details; list.FullRowSelect=true; list.MultiSelect=false; list.HideSelection=false;
-   list.Columns.Add("Projeto",150); list.Columns.Add("Último estado observado",270); list.Columns.Add("Modelo · contexto · custo",260); list.Columns.Add("Horário",80);
+   list.Columns.Add("Projeto",140); list.Columns.Add("Tarefa Redmine",175); list.Columns.Add("Último estado observado",215); list.Columns.Add("Modelo · contexto · custo",210); list.Columns.Add("Horário",80);
    list.SetBounds(14,15,852,215); list.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(list);
    details.Multiline=true; details.ReadOnly=true; details.ScrollBars=ScrollBars.Vertical;
    details.SetBounds(14,243,852,165); details.Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(details);
@@ -254,7 +255,7 @@
   void RefreshList() {
    updating=true; list.BeginUpdate(); list.Items.Clear();
    foreach(var s in read()) {
-    var row=new ListViewItem(new string[]{s.Project,s.Activity,s.Usage,s.Time.ToLocalTime().ToString("HH:mm:ss")}); row.Tag=s.Id; row.ToolTipText=s.Cwd; list.Items.Add(row);
+    var row=new ListViewItem(new string[]{s.Project,task(s),s.Activity,s.Usage,s.Time.ToLocalTime().ToString("HH:mm:ss")}); row.Tag=s.Id; row.ToolTipText=s.Cwd; list.Items.Add(row);
     if(s.Effective=="waiting" && !s.Silent) row.ForeColor=Color.FromArgb(176,110,0);
     else if(s.Closed||s.Silent||s.State=="ended") row.ForeColor=SystemColors.GrayText;
     if(s.Id==selected) row.Selected=true;

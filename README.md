@@ -190,11 +190,31 @@ horas de TRABALHO a tarefa está em andamento: soma TODOS os períodos em
 "Em andamento", contando só 08:00–12:00 e 13:12–18:00, de segunda a sexta.
 Tempo em qualquer outro status (Em pausa, Aguardando terceiros, Feedback…)
 não conta. Embaixo: quantos períodos (2x, 3x…) e desde quando está no atual.
-Clique nela para abrir a tarefa no navegador. A dica do mouse mostra
+Clique nela para ir ao terminal da sessão do Claude que trabalha na tarefa
+(sem sessão ligada, abre a tarefa no navegador; Menu › Redmine › "Abrir
+tarefa em andamento no Redmine" sempre abre no navegador). A dica do mouse mostra
 também as horas de hoje, a estimativa e o já apontado. A lista de tarefas é
 consultada a cada 3 min; as horas avançam a cada segundo. Sem tarefa em
 andamento, a pílula some e a faixa volta ao tamanho normal.
 Menu › Redmine › "Mostrar horas da tarefa em andamento" liga/desliga.
+
+HORAS DA TAREFA NO TERMINAL (BARRA DE STATUS)
+Se você mandar o link da tarefa na sessão (https://<seu-redmine>/issues/123),
+a barra de status do Claude Code mostra as horas dela no fim da linha:
+  Opus 5.5 | contexto 22% | US$ 7,24 | #123 1h30 em andamento
+• Vale o ÚLTIMO link do seu Redmine que VOCÊ digitou na sessão. Links em
+  respostas de ferramentas ou de subagentes são ignorados.
+• Tarefa fora de "Em andamento": aparece "#123 fora de andamento".
+• Com o widget fechado (dados com mais de 10 min), aparece só "#123".
+• No widget, "Projetos e sessões…" ganha a coluna "Tarefa Redmine" com o
+  número e as horas de cada sessão, e o radar do painel mostra
+  "projeto · #123 · Trabalhando".
+O widget grava as horas uma vez por minuto em
+%LOCALAPPDATA%\MeuClaudeWidget\redmine-clock.json (host do Redmine, números
+e horas das tarefas; sem chave). A barra de status lê o transcript da sessão
+só no seu computador, apenas a parte nova a cada vez, e guarda somente o
+número da tarefa no registro da sessão. Depois de atualizar o widget,
+rode Ativar-Radar.cmd de novo para instalar a barra de status nova.
 
 PRIVACIDADE E FUNCIONAMENTO
 Código próprio em Widget.cs, Radar.cs e Redmine.cs. Iniciar.ps1 compila-os em memória.

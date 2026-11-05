@@ -289,7 +289,7 @@ namespace MeuClaudeWidget {
   bool redmineBusy; DateTimeOffset nextRedmine = DateTimeOffset.MinValue; string redmineErrorDay = "";
   // Live clock of the Redmine issue in progress: issues refresh every 3 minutes, hours are recomputed every second.
   List<ActiveIssue> tasks = new List<ActiveIssue>(); bool taskShown, clockBusy; DateTimeOffset nextClock = DateTimeOffset.MinValue;
-  Dictionary<int,double> taskTotal = new Dictionary<int,double>(), taskToday = new Dictionary<int,double>(); string clockStamp = "";
+  Dictionary<int,double> taskTotal = new Dictionary<int,double>(), taskToday = new Dictionary<int,double>(); string clockStamp = "", redmineHost = "";
   Label taskLabel;
   ActiveIssue CurrentTask { get { return tasks.Count == 0 ? null : tasks.OrderBy(t => t.Current.Start).Last(); } }
   // Extra width of the compact strip taken by the task pill; positions are saved without it.
@@ -313,7 +313,7 @@ namespace MeuClaudeWidget {
    radarSummary = new Label { BackColor = Color.FromArgb(38,41,45), ForeColor = ink, Padding = new Padding(9), Cursor = Cursors.Hand }; Controls.Add(radarSummary);
    radarSummary.Click += delegate { ShowRadar(); };
    taskLabel = new Label { BackColor = Color.FromArgb(38,41,45), ForeColor = green, Padding = new Padding(9,4,9,4), Cursor = Cursors.Hand, Visible = false }; Controls.Add(taskLabel);
-   taskLabel.Click += delegate { OpenTask(); };
+   taskLabel.Click += delegate { GoToTask(); };
    compactButton = new Button { Text = "Compactar", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(42,44,48), ForeColor = accent, TabStop = true, AccessibleName = "Voltar ao modo compacto" };
    compactButton.FlatAppearance.BorderSize = 0;
    compactButton.Click += delegate { if (!settings.Compact) ToggleCompact(); };
@@ -343,6 +343,7 @@ namespace MeuClaudeWidget {
    var redmineClock = new ToolStripMenuItem("Mostrar horas da tarefa em andamento") { Checked = settings.RedmineClock, CheckOnClick = true };
    redmineClock.CheckedChanged += delegate { settings.RedmineClock = redmineClock.Checked; TrySave(); nextClock = DateTimeOffset.MinValue; UpdateTaskClock(); };
    redmineMenu.DropDownItems.Add(redmineClock);
+   redmineMenu.DropDownItems.Add("Abrir tarefa em andamento no Redmine", null, delegate { OpenTask(); });
    redmineMenu.DropDownItems.Add("Prévia do apontamento de hoje…", null, delegate { PreviewRedmine(); });
    redmineMenu.DropDownItems.Add("Não apontar hoje", null, delegate {
     settings.RedmineLastRun = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); TrySave();
@@ -371,7 +372,7 @@ namespace MeuClaudeWidget {
    MouseClick += delegate(object sender, MouseEventArgs e) {
     if (!settings.Compact || e.Button != MouseButtons.Left) return;
     if (e.X >= Width-Px(28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft);
-    else if (taskShown && TaskPill.Contains(e.Location)) { if (!dragged) OpenTask(); }
+    else if (taskShown && TaskPill.Contains(e.Location)) { if (!dragged) GoToTask(); }
     else if (e.X >= Px(254)+Lead && !dragged) ShowRadar();
    };
    timer.Interval = 1000; timer.Tick += async delegate {
@@ -426,8 +427,10 @@ namespace MeuClaudeWidget {
    if (preview) return;
    clockBusy = true; nextClock = DateTimeOffset.UtcNow.AddMinutes(3);
    try {
-    using (var client = RedmineClient.FromMcpConfig())
+    using (var client = RedmineClient.FromMcpConfig()) {
+     redmineHost = client == null ? "" : client.Host;
      tasks = client == null ? new List<ActiveIssue>() : await AutoLog.Load(client, DateTime.MaxValue);
+    }
    } catch { nextClock = DateTimeOffset.UtcNow.AddMinutes(1); } // keeps the last known issues
    finally { clockBusy = false; }
    UpdateTaskClock();
@@ -436,18 +439,43 @@ namespace MeuClaudeWidget {
   void UpdateTaskClock() {
    bool show = settings.RedmineClock && tasks.Count > 0;
    DateTime now = DateTime.Now; string stamp = now.ToString("yyyyMMddHHmm") + tasks.GetHashCode();
-   if (show && stamp != clockStamp) {
+   if (settings.RedmineClock && stamp != clockStamp) {
     // Every "Em andamento" period counts; time in any other status (pausa, aguardando terceiros, feedback…) does not.
     clockStamp = stamp;
     var spans = tasks.ToDictionary(t => t.Id, t => t.Spans);
     taskTotal = WorkDay.Totals(spans, now);
     taskToday = WorkDay.IsWorkday(now) ? WorkDay.Hours(spans, now.Date, now) : spans.Keys.ToDictionary(k => k, k => 0.0);
-   }
+    WriteClock();
+   } else if (!settings.RedmineClock && clockStamp.Length > 0) { clockStamp = ""; WriteClock(); }
    if (show == taskShown) return;
    int baseLeft = Left + Lead, bottom = Bottom;
    taskShown = show; Arrange();
    if (settings.Compact) Left = baseLeft - Lead; else Top = bottom - Height;
    PinCompact();
+  }
+  // Shares the hours with the Claude Code status line (StatusLine.ps1), which shows them in the
+  // terminal of the session whose user messages link the issue. Local file only; no Redmine key.
+  static readonly string ClockPath = Path.Combine(Data.Folder, "redmine-clock.json");
+  void WriteClock() {
+   if (preview) return;
+   try {
+    if (!settings.RedmineClock || redmineHost.Length == 0) { if (File.Exists(ClockPath)) File.Delete(ClockPath); return; }
+    var list = tasks.Select(t => {
+     double total, today; taskTotal.TryGetValue(t.Id, out total); taskToday.TryGetValue(t.Id, out today);
+     return new Dictionary<string,object> { { "Id", t.Id }, { "Total", WorkDay.Duration(total) }, { "Today", WorkDay.Duration(today) }, { "Periods", t.Spans.Count } };
+    }).ToList();
+    var doc = new Dictionary<string,object> { { "Host", redmineHost }, { "Updated", DateTimeOffset.UtcNow.ToString("o") }, { "Tasks", list } };
+    Directory.CreateDirectory(Data.Folder);
+    string temp = ClockPath + ".tmp";
+    File.WriteAllText(temp, Data.Json().Serialize(doc), new UTF8Encoding(false));
+    if (File.Exists(ClockPath)) File.Replace(temp, ClockPath, null); else File.Move(temp, ClockPath);
+   } catch { }
+  }
+  // Pill click: the terminal of the session working on the issue, or the issue in the browser.
+  void GoToTask() {
+   var task = CurrentTask; if (task == null) return;
+   var session = TaskSession(task.Id);
+   if (session != null) FocusSession(session.Id); else OpenTask();
   }
   void OpenTask() {
    var task = CurrentTask; if (task == null) return;
@@ -519,7 +547,19 @@ namespace MeuClaudeWidget {
   }
   void TrySave() { if (preview) return; try { Data.Save(settings); } catch { detail = "Não foi possível salvar preferências. Verifique a pasta LocalAppData."; } }
   string RadarTitle() {
-   return activeSession == null ? "Radar · aguardando Claude Code" : activeSession.Project + " · " + activeSession.Activity;
+   if (activeSession == null) return "Radar · aguardando Claude Code";
+   return activeSession.Project + (activeSession.Issue > 0 ? " · #" + activeSession.Issue : "") + " · " + activeSession.Activity;
+  }
+  // Redmine issue linked in a session: "#123 · 1h30" when in progress, otherwise "fora de andamento".
+  string SessionTask(SessionInfo s) {
+   if (s == null || s.Issue <= 0) return "";
+   if (!settings.RedmineClock || redmineHost.Length == 0) return "#" + s.Issue;
+   double total;
+   return tasks.Any(t => t.Id == s.Issue) && taskTotal.TryGetValue(s.Issue, out total) ? "#" + s.Issue + " · " + WorkDay.Duration(total) : "#" + s.Issue + " · fora de andamento";
+  }
+  // Most recent open session linked to the issue, if any.
+  SessionInfo TaskSession(int issue) {
+   return sessions.Where(s => s.Issue == issue && !s.Closed && s.State != "ended").OrderByDescending(s => s.Time).FirstOrDefault();
   }
   List<SessionInfo> OtherActive() { return sessions.Where(s=>s!=activeSession && s.Active).ToList(); }
   string OthersSummary() {
@@ -533,6 +573,7 @@ namespace MeuClaudeWidget {
   string RadarDetails() {
    if (activeSession == null) return "Radar sem eventos. Execute Ativar-Radar.cmd uma vez, reabra o Claude Code e envie uma mensagem.\nA integração é para Claude Code no Windows, fora do WSL.";
    string usage = activeSession.Usage.Length > 0 ? "Modelo: " + activeSession.Usage + "\n" : "";
+   if (activeSession.Issue > 0) usage += "Tarefa Redmine: " + SessionTask(activeSession) + "\n";
    string closed = activeSession.Closed ? "O processo do Claude Code desta sessão não está mais aberto.\n" : "";
    string others = OthersSummary(); if (others.Length > 0) others += "\n";
    return RadarTitle()+"\nSessão: "+activeSession.Id.Substring(0,8)+" · "+sessions.Count+" sessão(ões) nas últimas 24h\nÚltimo evento: "+activeSession.Event+" "+activeSession.Tool+" às "+activeSession.Time.ToLocalTime().ToString("dd/MM HH:mm:ss")+"\n"+usage+closed+others+gitInfo.Details+"\nEstado observado por eventos e pelo processo do Claude Code.";
@@ -540,7 +581,7 @@ namespace MeuClaudeWidget {
   void ShowRadar() {
    using (var form = new RadarForm(()=>new List<SessionInfo>(sessions),()=>RadarDetails(),id=>{
     settings.SelectedSession=id; SelectSession(); nextGit=DateTimeOffset.MinValue; TrySave(); UpdateLabels(); Invalidate(); RefreshGit();
-   },FocusSession)) form.ShowDialog(this);
+   },FocusSession,SessionTask)) form.ShowDialog(this);
   }
   void SelectSession() {
    SessionInfo selected = sessions.Find(s=>s.Id==settings.SelectedSession);
@@ -664,7 +705,7 @@ namespace MeuClaudeWidget {
     DateTime now = DateTime.Now; var task = CurrentTask; double total;
     taskTotal.TryGetValue(task.Id, out total);
     string subject = task.Subject.Length > 48 ? task.Subject.Substring(0, 48) + "…" : task.Subject;
-    taskLabel.Text = "#" + task.Id + " · " + WorkDay.Duration(total) + " em andamento · " + Periods(task) + " · atual desde " + WorkDay.SinceLabel(task.Current.Start, now) + "\n" + subject;
+    taskLabel.Text = "#" + task.Id + " · " + WorkDay.Duration(total) + " · " + Periods(task) + " · desde " + WorkDay.SinceLabel(task.Current.Start, now) + "\n" + subject;
     summary.Append("Redmine (horário de trabalho)\n");
     foreach (var t in tasks.OrderByDescending(x => x.Current.Start)) summary.Append(TaskLine(t, now)).Append("\n");
     summary.Append("\n");
@@ -900,7 +941,7 @@ namespace MeuClaudeWidget {
    for (int m = 300; m >= 0; m -= 10) history.Add(new Reading { T = now.AddMinutes(-m).ToUnixTimeSeconds(), P5 = Math.Max(0, 62-m*0.35), P7 = 31-m*0.01 });
    last = now; stale = false; status = "Conectado · login atual do Claude Code";
    sessions = new List<SessionInfo> {
-    new SessionInfo { Id = "a1b2c3d4e5", Cwd = @"C:\workspace\api-backend", State = "working", Event = "PreToolUse", Tool = "Bash", Updated = now.ToString("o"), TurnStarted = now.AddMinutes(-4).ToString("o"), Subagents = 2, Model = "Opus 5.5", Context = 42, Cost = 1.23 },
+    new SessionInfo { Id = "a1b2c3d4e5", Cwd = @"C:\workspace\api-backend", State = "working", Event = "PreToolUse", Tool = "Bash", Updated = now.ToString("o"), TurnStarted = now.AddMinutes(-4).ToString("o"), Subagents = 2, Model = "Opus 5.5", Context = 42, Cost = 1.23, Issue = 1234 },
     new SessionInfo { Id = "f6e5d4c3b2", Cwd = @"C:\workspace\painel-admin", State = "waiting", Event = "PermissionRequest", Tool = "Edit", Updated = now.AddMinutes(-1).ToString("o") },
     new SessionInfo { Id = "0918273645", Cwd = @"C:\workspace\site", State = "working", Event = "PostToolUse", Updated = now.ToString("o"), TurnStarted = now.AddSeconds(-40).ToString("o") }
    };
