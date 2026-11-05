@@ -216,8 +216,64 @@ só no seu computador, apenas a parte nova a cada vez, e guarda somente o
 número da tarefa no registro da sessão. Depois de atualizar o widget,
 rode Ativar-Radar.cmd de novo para instalar a barra de status nova.
 
+COMEMORAÇÃO DE TAREFA FINALIZADA
+A cada 5 min o widget confere as SUAS tarefas (as que têm apontamento seu
+nos últimos 90 dias). Quando uma vai para "Finalizada": confete na faixa,
+letreiro "★ #123 finalizada!" e notificação do Windows dizendo se passou na
+QA de primeira, horas vs estimativa e quantas já foram na semana. Clicar na
+notificação abre a tarefa. Só comemora o que for finalizado depois que o
+recurso foi ligado. Menu › Redmine: "Comemorar tarefas finalizadas"
+(liga/desliga) e "Ver exemplo da comemoração".
+
+PLACAR DA SEMANA
+Toda sexta, logo após o apontamento das 17:55, e a qualquer hora em
+Menu › Redmine › "Placar da semana…":
+• tarefas finalizadas e quantas passaram na QA de primeira (sem nenhuma ida
+  para "Rejeitada");
+• horas apontadas na semana e dias completos (8h30 ou mais; a jornada é 8h48);
+• barras por dia: clique num dia para lançar horas nele no Redmine ou
+  marcar como folga (feriado, férias), que deixa de contar como incompleto;
+• tarefas finalizadas com horas vs estimativa (clique abre a tarefa);
+• sequência de semanas sem rejeição.
+A primeira abertura lê o histórico de algumas semanas e leva alguns segundos;
+as semanas fechadas ficam guardadas em config.json.
+
+BOM DIA: ONDE VOCÊ PAROU
+Em dia útil, na primeira vez que o widget está aberto entre 07:30 e 12:00,
+chega uma notificação com o resumo do último dia trabalhado; clique nela
+para ver tudo. A qualquer hora: Menu › Redmine › "Bom dia: onde parei…".
+• Onde você parou: para cada sessão do Claude Code desde aquele dia, o seu
+  último pedido, a última resposta do Claude, a branch e os arquivos não
+  commitados, com atalho para o terminal (se a sessão ainda está aberta).
+• Tarefas: horas apontadas naquele dia e o status de agora de cada tarefa.
+• Novidades no Redmine desde as 18:00: rejeições (com a nota), tarefas
+  atribuídas a você, mudanças de status, comentários e tarefas finalizadas.
+• Uso do Claude no momento.
+Os transcripts são lidos só no seu computador (apenas o final do arquivo).
+Menu › Redmine › "Resumo de bom dia ao abrir" liga/desliga.
+
+FIXO NA BARRA DE TAREFAS (COMO O CLIMA)
+No modo compacto, a faixa fica presa na barra de tarefas, num espaço livre:
+ao lado do clima ou perto do relógio. Ela não arrasta; o Windows decide o
+espaço e o widget se ajusta sozinho (a cada 2 s) quando você abre ou fecha
+apps e os ícones centralizados crescem ou encolhem.
+• Usa a cor da própria barra (inclusive o degradê do Mica) e ganha o
+  destaque arredondado ao passar o mouse, como os botões do Windows.
+• Se o espaço é menor que a faixa completa, vira a versão densa em três
+  colunas de duas linhas: uso 5h/7d · tarefa e horas · projeto e estado.
+• Sai da frente quando a barra se esconde (ocultar automaticamente) e com
+  app em tela cheia (vídeo, jogo, apresentação).
+• Clicar na barra de tarefas não a esconde: ela volta para cima na hora.
+Menu: "Fixar na barra de tarefas" (liga/desliga) e "Posição na barra"
+(automática, ao lado do clima, perto do relógio). Desligado, volta a ser a
+faixa livre, na posição em que você deixou. Barra de tarefas vertical não é
+suportada (volta ao modo livre). Os ícones da barra são lidos pelo UI
+Automation do próprio Windows, só para medir o espaço livre.
+
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs, Radar.cs e Redmine.cs. Iniciar.ps1 compila-os em memória.
+Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs
+e Ui.cs (o kit visual das janelas: barra de título escura do Windows 11, ícones
+Segoe Fluent, fonte Segoe UI Variable). Iniciar.ps1 compila-os em memória.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.
 Não baixa pacotes, não instala serviços, não altera o registro e não envia
 telemetria. Usa requisições GET HTTPS para dados de uso, sem gerar mensagens.

@@ -228,39 +228,4 @@
    return result;
   }
  }
- public sealed class RadarForm : Form {
-  readonly ListView list=new ListView(); readonly TextBox details=new TextBox();
-  readonly System.Windows.Forms.Timer clock=new System.Windows.Forms.Timer();
-  readonly Func<List<SessionInfo>> read; readonly Func<string> describe; readonly Action<string> select, focus; readonly Func<SessionInfo,string> task;
-  string selected=""; bool updating;
-  public RadarForm(Func<List<SessionInfo>> readSessions,Func<string> description,Action<string> selectSession,Action<string> focusSession,Func<SessionInfo,string> taskLabel) {
-   read=readSessions; describe=description; select=selectSession; focus=focusSession; task=taskLabel;
-   Text="Claude · projetos e sessões"; Size=new Size(900,510); MinimumSize=new Size(760,440);
-   StartPosition=FormStartPosition.CenterParent; Font=new Font("Segoe UI",9); AutoScaleMode=AutoScaleMode.Dpi;
-   list.View=View.Details; list.FullRowSelect=true; list.MultiSelect=false; list.HideSelection=false;
-   list.Columns.Add("Projeto",140); list.Columns.Add("Tarefa Redmine",175); list.Columns.Add("Último estado observado",215); list.Columns.Add("Modelo · contexto · custo",210); list.Columns.Add("Horário",80);
-   list.SetBounds(14,15,852,215); list.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(list);
-   details.Multiline=true; details.ReadOnly=true; details.ScrollBars=ScrollBars.Vertical;
-   details.SetBounds(14,243,852,165); details.Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(details);
-   var automatic=new Button { Text="Seguir sessão mais recente", Left=14,Top=421,Width=220,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Left }; Controls.Add(automatic);
-   automatic.Click+=delegate { selected=""; select(""); RefreshList(); };
-   var terminal=new Button { Text="Ir para o terminal", Left=244,Top=421,Width=170,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Left }; Controls.Add(terminal);
-   terminal.Click+=delegate { if(list.SelectedItems.Count>0) focus((string)list.SelectedItems[0].Tag); };
-   list.DoubleClick+=delegate { if(list.SelectedItems.Count>0) focus((string)list.SelectedItems[0].Tag); };
-   var close=new Button { Text="Fechar",Left=766,Top=421,Width=100,Height=30,Anchor=AnchorStyles.Bottom|AnchorStyles.Right }; Controls.Add(close); close.Click+=delegate { Close(); };
-   list.SelectedIndexChanged+=delegate { if(!updating && list.SelectedItems.Count>0) { selected=(string)list.SelectedItems[0].Tag; select(selected); details.Text=describe(); } };
-   clock.Interval=2000; clock.Tick+=delegate { RefreshList(); }; Shown+=delegate { RefreshList(); clock.Start(); };
-   FormClosed+=delegate { clock.Stop(); clock.Dispose(); };
-  }
-  void RefreshList() {
-   updating=true; list.BeginUpdate(); list.Items.Clear();
-   foreach(var s in read()) {
-    var row=new ListViewItem(new string[]{s.Project,task(s),s.Activity,s.Usage,s.Time.ToLocalTime().ToString("HH:mm:ss")}); row.Tag=s.Id; row.ToolTipText=s.Cwd; list.Items.Add(row);
-    if(s.Effective=="waiting" && !s.Silent) row.ForeColor=Color.FromArgb(176,110,0);
-    else if(s.Closed||s.Silent||s.State=="ended") row.ForeColor=SystemColors.GrayText;
-    if(s.Id==selected) row.Selected=true;
-   }
-   list.EndUpdate(); updating=false; details.Text=describe();
-  }
- }
 }

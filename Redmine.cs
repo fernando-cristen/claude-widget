@@ -113,6 +113,7 @@ namespace MeuClaudeWidget {
   }
   public string Host { get { return root.Host; } }
   public string IssueUrl(int id) { return new Uri(root, "issues/" + id).ToString(); }
+  public string NewEntryUrl(DateTime day) { return new Uri(root, "time_entries/new?time_entry%5Bspent_on%5D=" + day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).ToString(); }
   // Returns null when no Redmine MCP server is configured: the feature then stays silent.
   public static RedmineClient FromMcpConfig() {
    var folders = new List<string>();
@@ -166,10 +167,10 @@ namespace MeuClaudeWidget {
  }
 
  public static class AutoLog {
-  static DateTime Local(object value) {
+  internal static DateTime Local(object value) {
    return DateTimeOffset.Parse(Data.Str(value), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToLocalTime().DateTime;
   }
-  static double Number(object value) {
+  internal static double Number(object value) {
    double n; return Double.TryParse(Data.Str(value), NumberStyles.Float, CultureInfo.InvariantCulture, out n) ? n : 0;
   }
   // Issues assigned to me in "Em andamento", with their in-progress spans; the open span ends at openEnd.
@@ -240,6 +241,117 @@ namespace MeuClaudeWidget {
     text.AppendLine();
    }
    return text.ToString().TrimEnd();
+  }
+ }
+
+ public class TimeEntryInfo { public int Issue; public DateTime Day; public double Hours; }
+ public class IssueInfo {
+  public int Id; public string Subject = "", Status = "", Url = "";
+  public double Estimated = -1, Spent; public DateTimeOffset? Closed;
+  public int Rejections; // times it went to "Rejeitada" (QA sent it back)
+  public bool Finished { get { return Status == Score.FinishedStatus; } }
+ }
+ public class WeekReport {
+  public DateTime Monday; public double[] Days = new double[5]; public double Total;
+  public List<IssueInfo> Finished = new List<IssueInfo>();
+  public Dictionary<string,int> Rejections = new Dictionary<string,int>(); // week (monday yyyy-MM-dd) → rejections
+ }
+
+ // Weekly scoreboard and the "finalizada" celebration. "My" issues are the ones I logged hours on.
+ public static class Score {
+  public const string FinishedStatus = "5", Rejected = "6";
+  public const double FullDay = 8.5; // workday 8h48, logged in half hours
+  public static DateTime Monday(DateTime d) { return d.Date.AddDays(-(((int)d.DayOfWeek + 6) % 7)); }
+  public static string Key(DateTime monday) { return monday.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); }
+  // "off", "future", "today", "ok" or "short".
+  public static string DayState(DateTime day, double hours, DateTime now, bool off) {
+   if (off) return "off";
+   if (day.Date > now.Date) return "future";
+   if (hours >= FullDay) return "ok";
+   if (day.Date == now.Date && now.TimeOfDay < WorkDay.RunAt + TimeSpan.FromMinutes(5)) return "today";
+   return "short";
+  }
+  // Consecutive weeks without rejection, from this week backwards (unknown weeks stop the count).
+  public static int Streak(Dictionary<string,int> weeks, DateTime monday) {
+   int count = 0; int value;
+   for (DateTime w = monday; weeks.TryGetValue(Key(w), out value) && value == 0; w = w.AddDays(-7)) count++;
+   return count;
+  }
+
+  // My time entries from "since" on (newest first; this Redmine ignores date filters, so it pages).
+  public static async Task<List<TimeEntryInfo>> Entries(RedmineClient api, DateTime since) {
+   var result = new List<TimeEntryInfo>();
+   for (int offset = 0; offset < 1000; offset += 100) {
+    var page = await api.Get("/time_entries.json?user_id=me&sort=spent_on:desc&limit=100&offset=" + offset);
+    var items = RedmineClient.Items(Data.Get(page, "time_entries")); bool older = false;
+    foreach (var e in items) {
+     var entry = Data.Map(e); DateTime day;
+     if (!DateTime.TryParseExact(Data.Str(Data.Get(entry, "spent_on")), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out day)) continue;
+     if (day < since) { older = true; continue; }
+     int issue = (int)AutoLog.Number(Data.Get(Data.Map(Data.Get(entry, "issue")), "id"));
+     result.Add(new TimeEntryInfo { Issue = issue, Day = day, Hours = AutoLog.Number(Data.Get(entry, "hours")) });
+    }
+    if (older || items.Length < 100) break;
+   }
+   return result;
+  }
+  public static async Task<List<IssueInfo>> Issues(RedmineClient api, IEnumerable<int> ids, string status = "*") {
+   var result = new List<IssueInfo>(); var all = ids.Where(i => i > 0).Distinct().ToList();
+   for (int i = 0; i < all.Count; i += 40) {
+    var page = await api.Get("/issues.json?status_id=" + status + "&limit=100&issue_id=" + String.Join(",", all.Skip(i).Take(40)));
+    foreach (var raw in RedmineClient.Items(Data.Get(page, "issues"))) {
+     var issue = Data.Map(raw); int id = (int)AutoLog.Number(Data.Get(issue, "id"));
+     object estimate = Data.Get(issue, "estimated_hours"), closed = Data.Get(issue, "closed_on");
+     result.Add(new IssueInfo { Id = id, Subject = Data.Str(Data.Get(issue, "subject")), Url = api.IssueUrl(id),
+      Status = Data.Str(Data.Get(Data.Map(Data.Get(issue, "status")), "id")),
+      Estimated = estimate == null ? -1 : AutoLog.Number(estimate), Spent = AutoLog.Number(Data.Get(issue, "spent_hours")),
+      Closed = closed == null ? (DateTimeOffset?)null : DateTimeOffset.Parse(Data.Str(closed), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal) });
+    }
+   }
+   return result;
+  }
+  // When each issue was sent to "Rejeitada", six requests at a time.
+  public static async Task<Dictionary<int,List<DateTime>>> RejectionDates(RedmineClient api, IEnumerable<int> ids) {
+   var result = new Dictionary<int,List<DateTime>>(); var all = ids.Where(i => i > 0).Distinct().ToList();
+   for (int i = 0; i < all.Count; i += 6) {
+    var batch = all.Skip(i).Take(6).ToList();
+    var pages = await Task.WhenAll(batch.Select(id => api.Get("/issues/" + id + ".json?include=journals")));
+    for (int k = 0; k < batch.Count; k++) {
+     var dates = new List<DateTime>();
+     foreach (var j in RedmineClient.Items(Data.Get(Data.Map(Data.Get(pages[k], "issue")), "journals"))) {
+      var journal = Data.Map(j);
+      foreach (var d in RedmineClient.Items(Data.Get(journal, "details"))) {
+       var detail = Data.Map(d);
+       if (Data.Str(Data.Get(detail, "name")) == "status_id" && Data.Str(Data.Get(detail, "new_value")) == Rejected) dates.Add(AutoLog.Local(Data.Get(journal, "created_on")));
+      }
+     }
+     result[batch[k]] = dates;
+    }
+   }
+   return result;
+  }
+
+  // The week's scoreboard. Rejections are counted for this week and for the previous weeks not in "known".
+  public static async Task<WeekReport> Week(RedmineClient api, DateTime now, ICollection<string> known) {
+   var report = new WeekReport { Monday = Monday(now) };
+   var entries = await Entries(api, report.Monday.AddDays(-90));
+   foreach (var e in entries.Where(x => x.Day >= report.Monday && x.Day < report.Monday.AddDays(7))) {
+    report.Total += e.Hours; int index = (int)(e.Day - report.Monday).TotalDays;
+    if (index < 5) report.Days[index] += e.Hours;
+   }
+   var issues = await Issues(api, entries.Select(e => e.Issue));
+   report.Finished = issues.Where(i => i.Finished && i.Closed.HasValue && Monday(i.Closed.Value.ToLocalTime().DateTime) == report.Monday).ToList();
+   // Weeks to (re)compute: this one, the previous one (may have changed since cached) and up to 5 earlier ones not cached yet.
+   var weeks = Enumerable.Range(0, 7).Select(n => report.Monday.AddDays(-7 * n)).Where(w => w >= report.Monday.AddDays(-7) || !known.Contains(Key(w))).ToList();
+   var touched = entries.Where(e => weeks.Contains(Monday(e.Day))).Select(e => e.Issue).Concat(report.Finished.Select(f => f.Id));
+   var rejections = await RejectionDates(api, touched);
+   foreach (var w in weeks) report.Rejections[Key(w)] = rejections.Values.Sum(list => list.Count(d => Monday(d) == w));
+   foreach (var f in report.Finished) { List<DateTime> list; f.Rejections = rejections.TryGetValue(f.Id, out list) ? list.Count : 0; }
+   return report;
+  }
+  // My issues in "Finalizada" (only that status is fetched, to keep the 5-minute check light).
+  public static async Task<List<IssueInfo>> FinishedAmong(RedmineClient api, IEnumerable<int> mine) {
+   return (await Issues(api, mine, FinishedStatus)).Where(i => i.Finished && i.Closed.HasValue).ToList();
   }
  }
 }
