@@ -272,6 +272,29 @@ Na barra de tarefas, espaço ocupado por novos ícones é liberado imediatamente
 a transição continua apenas no conteúdo. Os cliques acompanham os blocos.
 Desligar "Animações na faixa" aplica o resultado final imediatamente.
 
+VISUAL DA FAIXA
+• Pílulas de líquido: 5h e 7d são tubos com líquido e uma onda lenta na
+  superfície; verde-água até 60%, âmbar até 85%, vermelho acima.
+• Linha do dia: um fio na base da faixa mostra o expediente (08:00–12:00 ·
+  13:12–18:00): laranja quando o Claude trabalhou, âmbar quando esperou
+  você, apagado sem atividade, e um ponto brilhante no "agora". Fica salvo em
+  %LOCALAPPDATA%MeuClaudeWidgetdia.json (só o dia de hoje).
+• Bichinho: uma criatura em pixel art ao lado do projeto. Dorme quando está
+  tudo parado ou à noite, digita enquanto o Claude trabalha, acena quando
+  ele precisa de você, pula quando termina e dança com tarefa finalizada.
+• Modo noite: depois das 18:00 e no fim de semana a faixa escurece, fica
+  parada e mostra "Expediente encerrado · Xh apontadas hoje". Às 08:00
+  acorda com um brilho.
+• Cor de destaque do Windows: a faixa segue a cor do sistema; se ela for
+  cinza, mantém o laranja do Claude.
+• Tempo vs estimativa: com estimativa na tarefa, a faixa mostra "5h20 / 8h"
+  e um anel que enche como um cronômetro: verde até 70%, âmbar até 100%
+  (pulsando a partir de 85%) e vermelho depois, com um segundo arco por
+  fora mostrando o excesso. Ao cruzar 85% e 100%, uma onda sai do anel. Na
+  faixa completa, a pílula da tarefa enche até a estimativa ("de 8h · 66%"
+  ou "+1h29 além de 5h").
+Menu › "Visual da faixa" liga/desliga cada um (todos ligados por padrão).
+
 FIXO NA BARRA DE TAREFAS (COMO O CLIMA)
 No modo compacto, a faixa fica presa na barra de tarefas, num espaço livre:
 ao lado do clima ou perto do relógio. Ela não arrasta; o Windows decide o
@@ -291,7 +314,7 @@ suportada (volta ao modo livre). Os ícones da barra são lidos pelo UI
 Automation do próprio Windows, só para medir o espaço livre.
 
 PRIVACIDADE E FUNCIONAMENTO
-Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs, Vida.cs, Transicoes.cs
+Código próprio em Widget.cs, Radar.cs, Redmine.cs, Placar.cs, Bomdia.cs, Telas.cs, Taskbar.cs, Estilo.cs, Vida.cs, Transicoes.cs
 e Ui.cs (o kit visual das janelas: barra de título escura do Windows 11, ícones
 Segoe Fluent, fonte Segoe UI Variable). Iniciar.ps1 compila-os em memória.
 Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.

@@ -9,7 +9,7 @@ namespace MeuClaudeWidget {
 
  // Small owner-drawn UI kit: Windows 11 look (dark title bar, rounded cards, Fluent icons, Segoe UI Variable).
  public static class Theme {
-  public static readonly Color Bg = Color.FromArgb(16,17,20), Surface = Color.FromArgb(25,27,31), Raised = Color.FromArgb(33,36,41), Hover = Color.FromArgb(37,40,46),
+  public static Color Bg = Color.FromArgb(16,17,20), Surface = Color.FromArgb(25,27,31), Raised = Color.FromArgb(33,36,41), Hover = Color.FromArgb(37,40,46),
    Line = Color.FromArgb(43,46,53), Ink = Color.FromArgb(242,239,234), Soft = Color.FromArgb(186,188,194), Muted = Color.FromArgb(126,130,139),
    Accent = Color.FromArgb(217,150,114), Green = Color.FromArgb(98,196,140), Amber = Color.FromArgb(238,182,82), Red = Color.FromArgb(242,116,106), Blue = Color.FromArgb(108,166,242);
   static HashSet<string> installed;

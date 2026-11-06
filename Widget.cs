@@ -44,6 +44,7 @@ namespace MeuClaudeWidget {
   public string BriefingShown = "";
   public bool DockTaskbar = true;
   public bool Animations = true, Sounds = true;
+  public bool Liquid = true, DayLine = true, Creature = true, NightMode = true, WindowsAccent = true;
   public string DockSide = "auto"; // auto, left (next to the weather), right (next to the clock)
  }
  public class Bucket {
@@ -290,7 +291,7 @@ namespace MeuClaudeWidget {
   bool radarBusy, gitBusy, radarWarmed;
   DateTimeOffset nextRadar = DateTimeOffset.MinValue, nextGit = DateTimeOffset.MinValue;
   readonly Dictionary<string,string> observed = new Dictionary<string,string>();
-  readonly Color ink = Color.FromArgb(236,232,224), muted = Color.FromArgb(161,161,161), accent = Color.FromArgb(216,156,125);
+  Color ink = Color.FromArgb(236,232,224), muted = Color.FromArgb(161,161,161), accent = Color.FromArgb(216,156,125);
   readonly Color amber = Color.FromArgb(231,175,76), green = Color.FromArgb(110,190,145), red = Color.FromArgb(240,123,112);
   List<Reading> history = new List<Reading>();
   readonly int[] alertLevel = new int[2]; readonly DateTimeOffset?[] alertReset = new DateTimeOffset?[2]; readonly double?[] alertPercent = new double?[2];
@@ -383,6 +384,18 @@ namespace MeuClaudeWidget {
    var animItem = new ToolStripMenuItem("Animações na faixa") { Checked = settings.Animations, CheckOnClick = true };
    animItem.CheckedChanged += delegate { settings.Animations = animItem.Checked; FinishStripMotion(); TrySave(); UpdateAmbient(); Invalidate(); };
    menu.Items.Add(animItem);
+   var looks = new ToolStripMenuItem("Visual da faixa");
+   Action<string, Func<bool>, Action<bool>> look = (text, get, set) => {
+    var item = new ToolStripMenuItem(text) { Checked = get(), CheckOnClick = true };
+    item.CheckedChanged += delegate { set(item.Checked); TrySave(); RefreshAccent(); StyleTick(); Invalidate(); };
+    looks.DropDownItems.Add(item);
+   };
+   look("Pílulas de líquido", () => settings.Liquid, v => settings.Liquid = v);
+   look("Linha do dia", () => settings.DayLine, v => settings.DayLine = v);
+   look("Bichinho", () => settings.Creature, v => settings.Creature = v);
+   look("Modo noite após o expediente", () => settings.NightMode, v => settings.NightMode = v);
+   look("Cor de destaque do Windows", () => settings.WindowsAccent, v => settings.WindowsAccent = v);
+   menu.Items.Add(looks);
    var redmineMenu = new ToolStripMenuItem("Redmine");
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
    redmineAuto.CheckedChanged += delegate { settings.RedmineAuto = redmineAuto.Checked; TrySave(); };
@@ -424,6 +437,7 @@ namespace MeuClaudeWidget {
    tray.BalloonTipClicked += delegate { if (balloonAction != null) balloonAction(); else if (balloonSession != null) FocusSession(balloonSession); };
    anim.Tick += delegate { AnimateConfetti(); };
    ambientTimer.Tick += delegate { AnimationTick(); };
+   InitStyle();
    UpdateTray();
    state.Click += delegate { ShowStatusTip(); };
    AttachDrag(this); AttachDrag(title);
@@ -448,6 +462,7 @@ namespace MeuClaudeWidget {
     if (settings.RedmineClock && !clockBusy && DateTimeOffset.UtcNow >= nextClock) RefreshTaskClock();
     if (settings.RedmineCelebrate && !celebrateBusy && DateTimeOffset.UtcNow >= nextCelebrate) CheckFinished();
     if (settings.Compact && settings.DockTaskbar && !slotBusy && DateTimeOffset.UtcNow >= nextSlot) MeasureTaskbar();
+    StyleTick();
     // Friday: the scoreboard opens after the 17:55 time entry.
     DateTime local = DateTime.Now; string day = local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     if (settings.MorningBrief && !briefBusy && DateTimeOffset.UtcNow > startedAt.AddSeconds(20) && Recap.Due(local, settings.BriefingShown)) {
@@ -466,7 +481,7 @@ namespace MeuClaudeWidget {
     foregroundHook = Taskbar.WatchForeground(OnForeground);
     timer.Start(); if (settings.Mode.Length == 0) Configure(); else await RefreshUsage();
    };
-   FormClosing += delegate { stopped = true; timer.Stop(); FinishStripMotion(); DisposeStripMotion(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
+   FormClosing += delegate { stopped = true; timer.Stop(); DisposeStyle(); FinishStripMotion(); DisposeStripMotion(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
   }
   void Balloon(string caption, string text, string session) { balloonSession = session; balloonAction = null; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
   static void OpenUrl(string url) {
@@ -858,7 +873,7 @@ namespace MeuClaudeWidget {
      observed[session.Id]=session.Effective;
     }
     if(chime > 0 && settings.Sounds) Chime.Play(chime == 2);
-    radarWarmed=true; sessions=found; SelectSession(); UpdateLabels(); UpdateAmbient(); Invalidate(); RefreshGit();
+    radarWarmed=true; sessions=found; SelectSession(); UpdateLabels(); UpdateAmbient(); TrackDay(); Invalidate(); RefreshGit();
    } catch { gitInfo=new GitInfo { Error="Radar local indisponível" }; }
    finally { radarBusy=false; nextRadar=DateTimeOffset.UtcNow.AddSeconds(2); }
   }
@@ -1106,7 +1121,7 @@ namespace MeuClaudeWidget {
   void DenseColumns(out Rectangle usage, out Rectangle task, out Rectangle radar) {
    usage = new Rectangle(Px(6), 0, Px(70), Height);
    int x = usage.Right + Px(9);
-   task = taskShown && CurrentTask != null ? new Rectangle(x, 0, Px(92), Height) : Rectangle.Empty;
+   task = taskShown && CurrentTask != null ? new Rectangle(x, 0, Px(CurrentTask.Estimated > 0 ? 104 : 92), Height) : Rectangle.Empty;
    if (!task.IsEmpty) x = task.Right + Px(9);
    radar = new Rectangle(x, 0, Math.Max(0, StripWidth - Px(24) - x), Height);
   }
@@ -1120,38 +1135,33 @@ namespace MeuClaudeWidget {
      Bucket b = buckets.Count > i ? buckets[i] : new Bucket(); double? displayed = VisualUsage(i,b);
      Color baseColor = i == 0 ? amber : Color.FromArgb(98,167,230);
      DateTimeOffset when; bool runsOut = !stale && buckets.Count > i && Pace.RunsOut(history, i, b, now, out when);
-     Color color = stale ? Color.FromArgb(135,137,142) : (b.Percent.HasValue && b.Percent.Value >= 90) || runsOut ? red : baseColor;
-     // Same pill as the full strip: filled up to the usage, label in the bucket color, value on the right.
+     Color color = stale ? Color.FromArgb(135,137,142) : (b.Percent.HasValue && b.Percent.Value >= 90) || runsOut ? red : settings.Liquid && displayed.HasValue ? LevelColor(displayed.Value) : baseColor;
+     // Same pill as the full strip: filled up to the usage, label in the level color, value on the right.
      var pill = new Rectangle(usage.X, i == 0 ? Px(4) : Px(21), usage.Width, Px(15));
-     using (var shape = Rounded(pill, Px(7.5f))) {
-      using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background, shape);
-      var saved = g.Save(); g.SetClip(shape, CombineMode.Intersect);
-      if (displayed.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95, color))) g.FillRectangle(fill, pill.X, pill.Y, (float)(pill.Width * Math.Min(100, displayed.Value) / 100), pill.Height);
-      g.Restore(saved);
-     }
+     PaintPill(g, pill, displayed, color, Px(7.5f));
      StripText(g, i == 0 ? "5h" : "7d", tiny, new Rectangle(pill.X + Px(6), pill.Y, pill.Width, pill.Height), color, flags);
      StripText(g, displayed.HasValue ? Data.Percent(displayed.Value) : "—", bold, new Rectangle(pill.X, pill.Y, pill.Width - Px(6), pill.Height), ink, (flags & ~TextFormatFlags.Left) | TextFormatFlags.Right);
     }
     g.DrawLine(divider, usage.Right + Px(4), Px(9), usage.Right + Px(4), Height - Px(9));
     var current = CurrentTask;
     if (!task.IsEmpty && current != null) {
-     double total; taskTotal.TryGetValue(current.Id, out total);
-     StripText(g, "#" + current.Id, normal, new Rectangle(task.X, Px(4), task.Width, Px(15)), green, flags);
-     StripText(g, WorkDay.Duration(total) + (current.Spans.Count > 1 ? "  " + current.Spans.Count + "x" : ""), bold, new Rectangle(task.X, Px(21), task.Width, Px(15)), ink, flags);
+     PaintDenseTask(g, task, current, normal, bold, tiny, flags);
      g.DrawLine(divider, task.Right + Px(4), Px(9), task.Right + Px(4), Height - Px(9));
     }
     bool celebrating = DateTime.Now < bannerUntil;
-    string headline = celebrating ? banner : activeSession == null ? "Radar · aguardando" : activeSession.Project + " · " + activeSession.Label;
-    int orb = settings.Animations ? Px(15) : 0;
-    if (orb > 0) ambient.PaintOrb(g, radar.X + Px(5), Px(11.5f), ScaleFactor, DateTime.Now);
-    StripText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : StateColor(activeSession), flags);
+    string headline = celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? "Radar · aguardando" : activeSession.Project + " · " + activeSession.Label;
+    int orb = Mascot(g, radar.X, 0), lineShift = settings.Creature ? orb : 0;
+    StripText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : NightIdle ? muted : StateColor(activeSession), flags);
     var detail = new List<string>();
-    if (activeSession != null) {
-     if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
-     if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
+    if (NightIdle) detail.Add(NightDetail);
+    else {
+     if (activeSession != null) {
+      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
+      if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
+     }
+     detail.Add(gitInfo.Summary);
     }
-    detail.Add(gitInfo.Summary);
-    StripText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X, Px(21), radar.Width, Px(15)), muted, flags);
+    StripText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X + lineShift, Px(21), radar.Width - lineShift, Px(15)), muted, flags);
     // Other active sessions: small dots (amber needs you, accent working); then the menu dots.
     var others = OtherActive(); int waiting = others.Count(s => s.State == "waiting"), x = StripWidth - Px(18);
     if (others.Count - waiting > 0) using (var brush = new SolidBrush(accent)) g.FillEllipse(brush, x, Px(8), Px(6), Px(6));
@@ -1174,13 +1184,8 @@ namespace MeuClaudeWidget {
      Bucket b = buckets.Count > i ? buckets[i] : new Bucket(); double? displayed = VisualUsage(i,b);
      int x = Px(8+i*124), y=Px(5), w=Px(116), h=Px(16);
      Color baseColor = i==0 ? amber : Color.FromArgb(98,167,230);
-     Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? red : baseColor;
-     using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) {
-      using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
-      var saved = g.Save(); g.SetClip(pill, CombineMode.Intersect);
-      if (displayed.HasValue) using (var fill = new SolidBrush(Color.FromArgb(95,color))) g.FillRectangle(fill,x,y,(float)(w*Math.Min(100,displayed.Value)/100),h);
-      g.Restore(saved);
-     }
+     Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? red : settings.Liquid && displayed.HasValue ? LevelColor(displayed.Value) : baseColor;
+     PaintPill(g, new Rectangle(x,y,w,h), displayed, color, Px(8));
      StripText(g,i==0 ? "5h" : "7d",normal,new Rectangle(x+Px(8),y,w/2,h),color,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      string number = displayed.HasValue ? Data.Percent(displayed.Value) : "—";
      StripText(g,number,bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
@@ -1193,11 +1198,14 @@ namespace MeuClaudeWidget {
     var task = taskShown ? CurrentTask : null;
     if (task != null) {
      int x = Px(256), y = Px(5), w = Px(116), h = Px(16); double total; taskTotal.TryGetValue(task.Id, out total);
-     using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
+     string caption; Color captionColor;
+     if (!PaintTaskPill(g, task, new Rectangle(x,y,w,h), out caption, out captionColor)) {
+      using (var pill = Rounded(new RectangleF(x,y,w,h),Px(8))) using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background,pill);
+      caption = (task.Spans.Count > 1 ? task.Spans.Count + "x · " : "") + "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
+     }
      StripText(g,"#"+task.Id,normal,new Rectangle(x+Px(8),y,w-Px(8),h),green,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      StripText(g,WorkDay.Duration(total),bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
-     string since = (task.Spans.Count > 1 ? task.Spans.Count + "x · " : "") + "desde " + WorkDay.SinceLabel(task.Current.Start, DateTime.Now) + (tasks.Count > 1 ? " · +" + (tasks.Count-1) : "");
-     StripText(g,since,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),Color.FromArgb(175,177,182),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+     StripText(g,caption,tiny,new Rectangle(x+Px(3),Px(24),w,Px(12)),captionColor,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     }
     int lead = Lead;
     using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i=0;i<3;i++) g.FillEllipse(dots,StripWidth-Px(21-i*4),Px(11),Px(2),Px(2));
@@ -1215,18 +1223,20 @@ namespace MeuClaudeWidget {
     }
     int radarWidth = StripWidth-Px(298)-lead-badges.Count*Px(17);
     bool celebrating = DateTime.Now < bannerUntil;
-    string headline = celebrating ? banner : activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
-    int orb = settings.Animations ? Px(15) : 0;
-    if (orb > 0) ambient.PaintOrb(g, Px(269)+lead, Px(11.5f), ScaleFactor, DateTime.Now);
-    StripText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    string headline = celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
+    int orb = Mascot(g, Px(264)+lead, 0), lineShift = settings.Creature ? orb : 0;
+    StripText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : NightIdle ? muted : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     var detail = new List<string>();
-    if (activeSession != null) {
-     if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
-     if (activeSession.Extras.Length > 0) detail.Add(activeSession.Extras.Replace(" subagentes"," sub").Replace(" subagente"," sub"));
-     if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
+    if (NightIdle) detail.Add(NightDetail);
+    else {
+     if (activeSession != null) {
+      if (activeSession.Elapsed.Length > 0) detail.Add(activeSession.Elapsed);
+      if (activeSession.Extras.Length > 0) detail.Add(activeSession.Extras.Replace(" subagentes"," sub").Replace(" subagente"," sub"));
+      if (activeSession.Context >= 0) detail.Add("ctx " + Math.Round(activeSession.Context) + "%");
+     }
+     detail.Add(gitInfo.Summary);
     }
-    detail.Add(gitInfo.Summary);
-    StripText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead,Px(23),StripWidth-Px(298)-lead,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    StripText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead+lineShift,Px(23),StripWidth-Px(298)-lead-lineShift,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
     using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,StripWidth-Px(17),Px(27),Px(4),Px(4));
    }
@@ -1244,6 +1254,7 @@ namespace MeuClaudeWidget {
    base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
    if (settings.Compact) {
     PaintMovingCompact(g);
+    PaintNightAndWake(g); PaintDayLine(g);
     if (settings.Animations) ambient.PaintEdge(g, ClientRectangle, ScaleFactor, Px(7), DateTime.Now);
     PaintConfetti(g); return;
    }
@@ -1436,6 +1447,10 @@ namespace MeuClaudeWidget {
    var weeks = new Dictionary<string,int> { { "2026-11-02", 0 }, { "2026-10-26", 0 }, { "2026-10-19", 2 }, { "2026-10-12", 0 } };
    if (Score.Streak(weeks, new DateTime(2026,11,2)) != 2 || Score.Streak(weeks, new DateTime(2026,10,19)) != 0 || Score.Streak(weeks, new DateTime(2026,11,9)) != 0)
     throw new Exception("Falha: placar sequência sem rejeição.");
+   // Day line: one state per minute, "waiting" wins over "working" in the same minute, other days read as empty.
+   var track = new DayTrack(); var nine = new DateTime(2026,11,4,9,15,0);
+   track.Mark(nine, 1); track.Mark(nine.AddSeconds(20), 2); track.Mark(nine.AddSeconds(40), 1); track.Mark(nine.AddMinutes(1), 1);
+   if (track.At(nine.Date, 555) != 2 || track.At(nine.Date, 556) != 1 || track.At(nine.Date, 557) != 0 || track.At(nine.Date.AddDays(1), 555) != 0) throw new Exception("Falha: linha do dia.");
    // Morning summary: previous workday, time window, markdown cleanup and the transcript's last ask/answer.
    if (Recap.PreviousWorkday(new DateTime(2026,11,9)) != new DateTime(2026,11,6) || Recap.PreviousWorkday(day) != new DateTime(2026,11,3)) throw new Exception("Falha: bom dia dia útil anterior.");
    if (!Recap.Due(day.AddHours(8), "") || Recap.Due(day.AddHours(7), "") || Recap.Due(day.AddHours(13), "") || Recap.Due(day.AddHours(8), "2026-11-04") || Recap.Due(new DateTime(2026,11,7,8,0,0), ""))

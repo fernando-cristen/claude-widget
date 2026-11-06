@@ -8,7 +8,7 @@ try {
     $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Redmine.cs'), [System.Text.Encoding]::UTF8)
     $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Placar.cs'), [System.Text.Encoding]::UTF8)
     $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Bomdia.cs'), [System.Text.Encoding]::UTF8)
-    foreach ($extra in @('Ui.cs','Telas.cs','Taskbar.cs','Vida.cs','Transicoes.cs')) { $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot $extra), [System.Text.Encoding]::UTF8) }
+    foreach ($extra in @('Ui.cs','Telas.cs','Taskbar.cs','Vida.cs','Transicoes.cs','Estilo.cs')) { $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot $extra), [System.Text.Encoding]::UTF8) }
     $references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Net.Http.dll', 'System.Web.Extensions.dll', 'System.Security.dll')
     # UI Automation (finds the weather button and the taskbar icons) lives in the WPF folder of .NET Framework.
     foreach ($name in @('UIAutomationClient', 'UIAutomationTypes', 'WindowsBase')) { $references += [System.Reflection.Assembly]::Load($name + ', Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35').Location }

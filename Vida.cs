@@ -11,7 +11,7 @@ namespace MeuClaudeWidget {
  // The strip "breathes": an animated status orb next to the project name and light effects along the strip,
  // so the Claude session state is readable from the corner of the eye, without notifications.
  public sealed class Ambient {
-  public static readonly Color Working = Color.FromArgb(232,150,104), Background = Color.FromArgb(108,166,242), Waiting = Color.FromArgb(244,186,72),
+  public static Color Working = Color.FromArgb(232,150,104), Background = Color.FromArgb(108,166,242), Waiting = Color.FromArgb(244,186,72),
    Done = Color.FromArgb(98,204,146), Error = Color.FromArgb(244,108,98), Idle = Color.FromArgb(128,131,139);
   string state = "idle"; DateTime changed = DateTime.MinValue, born = DateTime.Now;
   Color from = Idle, to = Idle;
@@ -30,9 +30,12 @@ namespace MeuClaudeWidget {
    if (next == "waiting") ripples.Add(new KeyValuePair<DateTime,Color>(now, Waiting));
    if (next == "error") { sweep = now; sweepColor = Error; }
   }
-  public bool Animating(DateTime now) {
+  public bool Animating(DateTime now) { return Continuous || Transient(now); }
+  // Steady motion (comet, breathing) vs. short events (ripples, sweeps, color change) that need full frame rate.
+  public bool Continuous { get { return state == "working" || state == "background" || state == "waiting"; } }
+  public bool Transient(DateTime now) {
    ripples.RemoveAll(r => (now - r.Key).TotalSeconds > 1.4);
-   return state == "working" || state == "background" || state == "waiting" || ripples.Count > 0 || (now - changed).TotalSeconds < 1.2 || (now - sweep).TotalSeconds < 1.1;
+   return ripples.Count > 0 || (now - changed).TotalSeconds < 1.2 || (now - sweep).TotalSeconds < 1.1;
   }
   Color CurrentColor(DateTime now) {
    double t = Math.Min(1, (now - changed).TotalSeconds / 0.6); t = t * t * (3 - 2 * t);
