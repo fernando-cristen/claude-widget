@@ -140,10 +140,11 @@
  }
  public class GitInfo {
   public string Branch = "", Error = "", Root = "";
-  public int Files, Untracked, Binary;
+  public int Files, Untracked, Binary, Ahead = -1; // Ahead: local commits not pushed yet (-1 without upstream)
   public long Added, Removed;
   public DateTimeOffset? Commit;
   public bool LinesKnown;
+  public List<long> TodayCommits = new List<long>(), TodayPushed = new List<long>(); // my commits today (unix time) on this branch, and the ones already on the remote
   public string Summary {
    get {
     if (Error.Length > 0) return Error;
@@ -184,6 +185,7 @@
     return new Output { Code=process.ExitCode, Text=stdout.Result };
    }
   }
+  static List<long> Times(Output o) { var list=new List<long>(); if(o.Code!=0) return list; long v; foreach(var line in o.Text.Split(new[]{'\n'},StringSplitOptions.RemoveEmptyEntries)) if(Int64.TryParse(line.Trim(),out v)) list.Add(v); return list; }
   public static int CountFiles(string status,out int untracked) {
    untracked=0; int count=0; var parts=status.Split('\0');
    for(int i=0;i<parts.Length;i++) {
@@ -221,6 +223,13 @@
      var diff=Run(exe,result.Root,"diff --no-ext-diff --no-textconv --ignore-submodules=all --numstat -z HEAD --");
      if(diff.Code!=0) throw new InvalidOperationException("Git não pôde calcular o diff");
      CountLines(diff.Text,result); result.LinesKnown=true;
+     var ahead=Run(exe,result.Root,"rev-list --count @{u}..HEAD"); int count;
+     result.Ahead=ahead.Code==0 && Int32.TryParse(ahead.Text.Trim(),out count)?count:-1;
+     // Today's commits by me (git user.email), for the constellation on the day line.
+     var mail=Run(exe,result.Root,"config user.email"); string who=mail.Code==0 && mail.Text.Trim().Length>0?" --author=\""+mail.Text.Trim()+"\"":"";
+     string since=" --since=\""+DateTime.Today.ToString("yyyy-MM-dd")+" 00:00\"";
+     result.TodayCommits=Times(Run(exe,result.Root,"log"+since+who+" --format=%ct HEAD --"));
+     if(result.Ahead>=0) result.TodayPushed=Times(Run(exe,result.Root,"log"+since+who+" --format=%ct @{u} --"));
     }
    } catch(TimeoutException) { result.Error="Git demorou demais; nova leitura em breve"; }
    catch(InvalidOperationException ex) { result.Error=ex.Message; }

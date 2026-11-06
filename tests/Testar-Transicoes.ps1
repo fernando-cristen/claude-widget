@@ -1,10 +1,11 @@
-param([string]$RenderFolder)
+﻿param([string]$RenderFolder)
 # Local synthetic data only. No application settings, account or Redmine requests are used.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$files = @('Widget.cs','Radar.cs','Redmine.cs','Placar.cs','Bomdia.cs','Ui.cs','Telas.cs','Taskbar.cs','Vida.cs','Transicoes.cs')
-$source = ($files | ForEach-Object { [IO.File]::ReadAllText((Join-Path $PSScriptRoot $_)) }) -join [Environment]::NewLine
+$src = Join-Path (Split-Path $PSScriptRoot -Parent) 'src'
+$files = @(Get-ChildItem -LiteralPath $src -Recurse -Filter '*.cs' | Sort-Object { if ($_.Name -eq 'Widget.cs') { '' } else { $_.FullName } })
+$source = ($files | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join [Environment]::NewLine
 # Allow the animation renderer in preview instances; all preview guards for I/O stay intact.
 $source = $source.Replace('settings.Animations && settings.Compact && !preview && !stopped && Visible', 'settings.Animations && settings.Compact && !stopped && Visible')
 $source += @'

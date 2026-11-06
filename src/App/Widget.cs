@@ -45,6 +45,13 @@ namespace MeuClaudeWidget {
   public bool DockTaskbar = true;
   public bool Animations = true, Sounds = true;
   public bool Liquid = true, DayLine = true, Creature = true, NightMode = true, WindowsAccent = true;
+  public bool WeatherFx = true, Family = true, Flame = true, Battery = true;
+  public bool Events = true, XpSeeded;
+  public bool Desk = true, Walks = true, Speech = true, Music = true, Games = true, Colleagues = true, TrophiesSeeded; public int DeskX = Int32.MinValue, DeskY = Int32.MinValue;
+  public string CreatureName = "", CreatureShape = "round", CreatureColor = "", LastFinishedDay = "", PlantWatered = "";
+  public int Fish, PlantDays;
+  public List<string> Trophies = new List<string>();
+  public int CreatureXp;
   public string DockSide = "auto"; // auto, left (next to the weather), right (next to the clock)
  }
  public class Bucket {
@@ -311,7 +318,7 @@ namespace MeuClaudeWidget {
   TaskbarSlot slot; bool slotBusy, hovering; IntPtr foregroundHook; DateTimeOffset nextSlot = DateTimeOffset.MinValue; Color dockBack = Color.Empty, dockLeft = Color.Empty, dockRight = Color.Empty; int dockWidth;
   // Living strip: animated status orb and light effects (30 fps only while something moves).
   readonly Ambient ambient = new Ambient();
-  readonly System.Windows.Forms.Timer ambientTimer = new System.Windows.Forms.Timer { Interval = 33 };
+  readonly System.Windows.Forms.Timer ambientTimer = new System.Windows.Forms.Timer { Interval = 16 };
   bool Docked { get { return !preview && settings.Compact && settings.DockTaskbar && slot != null; } }
   int FullWidth { get { return Px(540) + Lead; } }
   bool Dense { get { return settings.Compact && (stripPaintWidth > 0 ? stripPaintWidth : CompactWidth) < FullWidth - Px(2); } }
@@ -392,9 +399,58 @@ namespace MeuClaudeWidget {
    };
    look("Pílulas de líquido", () => settings.Liquid, v => settings.Liquid = v);
    look("Linha do dia", () => settings.DayLine, v => settings.DayLine = v);
-   look("Bichinho", () => settings.Creature, v => settings.Creature = v);
+   look("Bichinho", () => settings.Creature, v => { settings.Creature = v; SyncDesk(); });
+   look("Bichinho na área de trabalho", () => settings.Desk, v => { settings.Desk = v; SyncDesk(); });
+   look("Passeios pela tela", () => settings.Walks, v => { settings.Walks = v; if (!v && Away) GoDown(); });
+   look("Falas do bichinho", () => settings.Speech, v => settings.Speech = v);
+   look("Dança com a música (Spotify)", () => settings.Music, v => { settings.Music = v; if (!v) song = ""; });
+   look("Brincadeiras enquanto o Claude trabalha", () => settings.Games, v => settings.Games = v);
+   look("Visitas dos colegas (Redmine)", () => settings.Colleagues, v => settings.Colleagues = v);
    look("Modo noite após o expediente", () => settings.NightMode, v => settings.NightMode = v);
    look("Cor de destaque do Windows", () => settings.WindowsAccent, v => settings.WindowsAccent = v);
+   look("Clima no bichinho e na faixa", () => settings.WeatherFx, v => settings.WeatherFx = v);
+   look("Família de sessões", () => settings.Family, v => settings.Family = v);
+   look("Chama da sequência sem rejeição", () => settings.Flame, v => settings.Flame = v);
+   look("Bateria do contexto", () => settings.Battery, v => settings.Battery = v);
+   look("Acontecimentos (passarinho, borboleta…)", () => settings.Events, v => settings.Events = v);
+   // Try any animation right now, without waiting for it to happen.
+   var test = new ToolStripMenuItem("Testar");
+   foreach (var kind in new[] { new KeyValuePair<string,string>("random", "Acontecimento aleatório"), new KeyValuePair<string,string>("bird", "Passarinho"), new KeyValuePair<string,string>("butterfly", "Borboleta"),
+    new KeyValuePair<string,string>("ladybug", "Joaninha"), new KeyValuePair<string,string>("leaf", "Folha caindo"), new KeyValuePair<string,string>("snail", "Caracol"),
+    new KeyValuePair<string,string>("star", "Estrela cadente"), new KeyValuePair<string,string>("firefly", "Vagalumes") }) {
+    string k = kind.Key; test.DropDownItems.Add(kind.Value, null, delegate { StartHappening(k); });
+   }
+   test.DropDownItems.Add(new ToolStripSeparator());
+   test.DropDownItems.Add("Subir de nível", null, delegate { levelUpAt = DateTime.Now; StartMotionTimer(); });
+   test.DropDownItems.Add("Erro num comando (raio)", null, delegate { failAt = DateTime.Now; StartMotionTimer(); });
+   test.DropDownItems.Add("Sessão terminou (família comemora)", null, delegate { cheerAt = DateTime.Now; StartMotionTimer(); });
+   test.DropDownItems.Add("Limite renovado (redemoinho)", null, delegate { TestDrain(); });
+   test.DropDownItems.Add("Bichinho tonto", null, delegate { dizzyUntil = DateTime.Now.AddSeconds(3.2); StartMotionTimer(); });
+   test.DropDownItems.Add("Passeio", null, delegate { WalkNow(); });
+   test.DropDownItems.Add("Ganhar troféu", null, delegate { trophyAt = DateTime.Now; trophyTitle = "Troféu de teste"; trophyId = "t10"; Say("Ganhei um troféu!", true); StartMotionTimer(); });
+   test.DropDownItems.Add("Push (aviãozinho)", null, delegate { planeAt = DateTime.Now; StartMotionTimer(); });
+   var games = new ToolStripMenuItem("Brincadeira (30 s)"); test.DropDownItems.Add(games);
+   foreach (var gm in GameNames) { string key = gm[0]; games.DropDownItems.Add(gm[1], null, delegate { forcedGame = key; playTestUntil = DateTime.Now.AddSeconds(30); if (game.Length > 0) StartGame(key); }); }
+   test.DropDownItems.Add("Visita de colega", null, delegate { visitors.Enqueue(new Visitor { Name = "Colega", Issue = 1234, Tint = FamilyTints[talk.Next(FamilyTints.Length)] }); });
+   test.DropDownItems.Add("Fala", null, delegate { Say(Pick("Bora almoçar?", "Sextou!", "Editando o código…"), true); });
+   // The creature's own look: name, shape and color.
+   var custom = new ToolStripMenuItem("Personalizar bichinho");
+   custom.DropDownItems.Add("Nome…", null, delegate { string n = AskName(settings.CreatureName ?? ""); if (n != null) { settings.CreatureName = n; TrySave(); WriteCreatureFile(true); Invalidate(); } });
+   var shapes = new ToolStripMenuItem("Formato"); custom.DropDownItems.Add(shapes);
+   foreach (var s in Shapes) {
+    string key = s[0]; var item = new ToolStripMenuItem(s[1]) { Checked = Shape == key };
+    item.Click += delegate { settings.CreatureShape = key; foreach (ToolStripItem o in shapes.DropDownItems) { var m = o as ToolStripMenuItem; if (m != null) m.Checked = m == item; } TrySave(); WriteCreatureFile(true); Invalidate(); };
+    shapes.DropDownItems.Add(item);
+   }
+   var tints = new ToolStripMenuItem("Cor"); custom.DropDownItems.Add(tints);
+   foreach (var c in Tints) {
+    string key = c[0]; var item = new ToolStripMenuItem(c[1]) { Checked = (settings.CreatureColor ?? "") == key };
+    item.Click += delegate { settings.CreatureColor = key; foreach (ToolStripItem o in tints.DropDownItems) { var m = o as ToolStripMenuItem; if (m != null) m.Checked = m == item; } TrySave(); Invalidate(); };
+    tints.DropDownItems.Add(item);
+   }
+   looks.DropDownItems.Add(new ToolStripSeparator());
+   looks.DropDownItems.Add(custom);
+   looks.DropDownItems.Add(test);
    menu.Items.Add(looks);
    var redmineMenu = new ToolStripMenuItem("Redmine");
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
@@ -450,6 +506,7 @@ namespace MeuClaudeWidget {
    MouseLeave += delegate { hovering = false; Invalidate(); };
    MouseClick += delegate(object sender, MouseEventArgs e) {
     if (!settings.Compact || e.Button != MouseButtons.Left) return;
+    if (PokeCreature(e.Location)) return;
     if (e.X >= Width-Px(Dense ? 22 : 28)) menu.Show(this, new Point(Width - 10, 0), ToolStripDropDownDirection.AboveLeft);
     else if (taskShown && HitLayout.Task.Contains(e.Location)) { if (!dragged) GoToTask(); }
     else if (HitLayout.Radar.Contains(e.Location) && !dragged) ShowRadar();
@@ -504,11 +561,13 @@ namespace MeuClaudeWidget {
       nextMine = DateTimeOffset.UtcNow.AddHours(1);
      }
      var finished = await Score.FinishedAmong(client, myIssues.Concat(tasks.Select(t => t.Id)));
+     SeedXp(finished.Count);
      var fresh = finished.Where(f => f.Closed.Value > since && !settings.RedmineCelebrated.Contains(f.Id)).OrderBy(f => f.Closed).ToList();
      if (fresh.Count == 0) return;
      var rejections = await Score.RejectionDates(client, fresh.Select(f => f.Id));
      foreach (var f in fresh) { f.Rejections = rejections[f.Id].Count; settings.RedmineCelebrated.Add(f.Id); }
      if (settings.RedmineCelebrated.Count > 200) settings.RedmineCelebrated.RemoveRange(0, settings.RedmineCelebrated.Count - 200);
+     AddXp(fresh.Count); settings.LastFinishedDay = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
      TrySave();
      DateTime monday = Score.Monday(DateTime.Now);
      int week = finished.Count(f => Score.Monday(f.Closed.Value.ToLocalTime().DateTime) == monday);
@@ -677,6 +736,7 @@ namespace MeuClaudeWidget {
    finally { slotBusy = false; }
    if (stopped || !settings.DockTaskbar) return;
    bool wasDocked = Docked; slot = found;
+   if (found != null) weather = WeatherNow.Parse(found.Weather);
    if (slot == null && wasDocked) { dockWidth = 0; Arrange(); RestorePosition(); return; } // vertical taskbar or not found: free mode
    ApplyDock();
   }
@@ -811,6 +871,17 @@ namespace MeuClaudeWidget {
    };
    c.MouseUp += delegate { bool was = dragging; dragging = false; c.Capture = false; if (was && !Docked) { RememberPosition(); TrySave(); } };
   }
+  // A small box to name the creature (empty clears it).
+  string AskName(string currentName) {
+   using (var form = new Form { Text = "Nome do bichinho", FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, TopMost = true,
+    StartPosition = FormStartPosition.CenterScreen, ClientSize = new Size(Px(300), Px(104)), BackColor = Theme.Bg, ForeColor = ink, Font = Theme.F(Theme.Sans, 9f) }) {
+    form.Controls.Add(new Label { Text = "Como ele se chama?", Left = Px(14), Top = Px(12), Width = Px(270), Height = Px(20) });
+    var box = new TextBox { Text = currentName, Left = Px(14), Top = Px(36), Width = Px(272), MaxLength = 16 }; form.Controls.Add(box);
+    var ok = new Button { Text = "Salvar", DialogResult = DialogResult.OK, Left = Px(196), Top = Px(68), Width = Px(90), Height = Px(26), FlatStyle = FlatStyle.Flat }; form.Controls.Add(ok);
+    form.AcceptButton = ok;
+    return form.ShowDialog() == DialogResult.OK ? box.Text.Trim() : null;
+   }
+  }
   void TrySave() { if (preview) return; try { Data.Save(settings); } catch { detail = "Não foi possível salvar preferências. Verifique a pasta LocalAppData."; } }
   string RadarTitle() {
    if (activeSession == null) return "Radar · aguardando Claude Code";
@@ -883,6 +954,7 @@ namespace MeuClaudeWidget {
    if (next != "working" && next != "background" && next != "waiting" && next != "done" && next != "error") next = "idle";
    DateTime now = DateTime.Now; ambient.Update(next, now);
    if (settings.Animations && settings.Compact && !preview && ambient.Animating(now)) { if (!ambientTimer.Enabled) ambientTimer.Start(); }
+   TrackCreatureEvents();
   }
   async void RefreshGit() {
    if(gitBusy||stopped||activeSession==null||DateTimeOffset.UtcNow<nextGit)return;
@@ -1123,7 +1195,8 @@ namespace MeuClaudeWidget {
    int x = usage.Right + Px(9);
    task = taskShown && CurrentTask != null ? new Rectangle(x, 0, Px(CurrentTask.Estimated > 0 ? 104 : 92), Height) : Rectangle.Empty;
    if (!task.IsEmpty) x = task.Right + Px(9);
-   radar = new Rectangle(x, 0, Math.Max(0, StripWidth - Px(24) - x), Height);
+   int right = settings.Family ? Math.Max(Px(24), FamilyWidth + Px(4)) : Px(24);
+   radar = new Rectangle(x, 0, Math.Max(0, StripWidth - right - x), Height);
   }
   void PaintDense(Graphics g) {
    Rectangle usage, task, radar; DenseColumns(out usage, out task, out radar);
@@ -1138,7 +1211,7 @@ namespace MeuClaudeWidget {
      Color color = stale ? Color.FromArgb(135,137,142) : (b.Percent.HasValue && b.Percent.Value >= 90) || runsOut ? red : settings.Liquid && displayed.HasValue ? LevelColor(displayed.Value) : baseColor;
      // Same pill as the full strip: filled up to the usage, label in the level color, value on the right.
      var pill = new Rectangle(usage.X, i == 0 ? Px(4) : Px(21), usage.Width, Px(15));
-     PaintPill(g, pill, displayed, color, Px(7.5f));
+     PaintUsagePill(g, i, pill, displayed, color, Px(7.5f));
      StripText(g, i == 0 ? "5h" : "7d", tiny, new Rectangle(pill.X + Px(6), pill.Y, pill.Width, pill.Height), color, flags);
      StripText(g, displayed.HasValue ? Data.Percent(displayed.Value) : "—", bold, new Rectangle(pill.X, pill.Y, pill.Width - Px(6), pill.Height), ink, (flags & ~TextFormatFlags.Left) | TextFormatFlags.Right);
     }
@@ -1149,7 +1222,7 @@ namespace MeuClaudeWidget {
      g.DrawLine(divider, task.Right + Px(4), Px(9), task.Right + Px(4), Height - Px(9));
     }
     bool celebrating = DateTime.Now < bannerUntil;
-    string headline = celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? "Radar · aguardando" : activeSession.Project + " · " + activeSession.Label;
+    string headline = LevelBanner ?? (celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? "Radar · aguardando" : settings.Creature ? activeSession.Project : activeSession.Project + " · " + activeSession.Label);
     int orb = Mascot(g, radar.X, 0), lineShift = settings.Creature ? orb : 0;
     StripText(g, headline, celebrating ? bold : normal, new Rectangle(radar.X + orb, Px(4), radar.Width - orb, Px(15)), celebrating ? amber : NightIdle ? muted : StateColor(activeSession), flags);
     var detail = new List<string>();
@@ -1161,18 +1234,24 @@ namespace MeuClaudeWidget {
      }
      detail.Add(gitInfo.Summary);
     }
-    StripText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X + lineShift, Px(21), radar.Width - lineShift, Px(15)), muted, flags);
-    // Other active sessions: small dots (amber needs you, accent working); then the menu dots.
-    var others = OtherActive(); int waiting = others.Count(s => s.State == "waiting"), x = StripWidth - Px(18);
-    if (others.Count - waiting > 0) using (var brush = new SolidBrush(accent)) g.FillEllipse(brush, x, Px(8), Px(6), Px(6));
-    if (waiting > 0) using (var brush = new SolidBrush(amber)) g.FillEllipse(brush, x + Px(7), Px(8), Px(6), Px(6));
-    using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i = 0; i < 3; i++) g.FillEllipse(dots, StripWidth - Px(15) + i * Px(4), Px(26), Px(2), Px(2));
+    int battery = NightIdle ? 0 : PaintBattery(g, radar.X + lineShift, Px(21), Px(15));
+    StripText(g, String.Join(" · ", detail), tiny, new Rectangle(radar.X + lineShift + battery, Px(21), radar.Width - lineShift - battery, Px(15)), muted, flags);
+    // Other active sessions as mini creatures (or dots); the streak flame takes the place of the menu dots.
+    if (settings.Family) PaintFamily(g, StripWidth - Px(3), 0);
+    else {
+     var others = OtherActive(); int waiting = others.Count(s => s.State == "waiting"), x = StripWidth - Px(18);
+     if (others.Count - waiting > 0) using (var brush = new SolidBrush(accent)) g.FillEllipse(brush, x, Px(8), Px(6), Px(6));
+     if (waiting > 0) using (var brush = new SolidBrush(amber)) g.FillEllipse(brush, x + Px(7), Px(8), Px(6), Px(6));
+    }
+    if (!PaintFlame(g, StripWidth - Px(10), Height - Px(6)))
+     using (var dots = new SolidBrush(Color.FromArgb(181,183,187))) for (int i = 0; i < 3; i++) g.FillEllipse(dots, StripWidth - Px(15) + i * Px(4), Px(26), Px(2), Px(2));
    }
   }
   void PaintCompact(Graphics g) {
    if (Docked && !dockLeft.IsEmpty && StripWidth > 0)
     using (var back = new LinearGradientBrush(new Rectangle(-1, 0, StripWidth + 2, Height), dockLeft, dockRight, 0f)) g.FillRectangle(back, new Rectangle(0,0,StripWidth,Height));
    if (Docked && hovering) using (var glow = Rounded(new RectangleF(Px(1),Px(1),StripWidth-Px(2),Height-Px(2)),Px(6))) using (var brush = new SolidBrush(Color.FromArgb(22,255,255,255))) g.FillPath(brush,glow);
+   PaintWeatherBack(g);
    if (Dense) { PaintDense(g); return; }
    if (!Docked) using (var outline = Rounded(new RectangleF(.5f,.5f,StripWidth-1,Height-1),Px(8)))
    using (var pen = new Pen(Color.FromArgb(67,68,70))) g.DrawPath(pen,outline);
@@ -1185,7 +1264,7 @@ namespace MeuClaudeWidget {
      int x = Px(8+i*124), y=Px(5), w=Px(116), h=Px(16);
      Color baseColor = i==0 ? amber : Color.FromArgb(98,167,230);
      Color color = stale ? Color.FromArgb(135,137,142) : b.Percent.HasValue && b.Percent.Value >= 90 ? red : settings.Liquid && displayed.HasValue ? LevelColor(displayed.Value) : baseColor;
-     PaintPill(g, new Rectangle(x,y,w,h), displayed, color, Px(8));
+     PaintUsagePill(g, i, new Rectangle(x,y,w,h), displayed, color, Px(8));
      StripText(g,i==0 ? "5h" : "7d",normal,new Rectangle(x+Px(8),y,w/2,h),color,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
      string number = displayed.HasValue ? Data.Percent(displayed.Value) : "—";
      StripText(g,number,bold,new Rectangle(x+Px(28),y,w-Px(36),h),ink,TextFormatFlags.Right|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
@@ -1214,16 +1293,18 @@ namespace MeuClaudeWidget {
     var others = OtherActive();
     int waiting = others.Count(s=>s.State=="waiting");
     var badges = new List<KeyValuePair<int,Color>>();
-    if (waiting > 0) badges.Add(new KeyValuePair<int,Color>(waiting,amber));
-    if (others.Count-waiting > 0) badges.Add(new KeyValuePair<int,Color>(others.Count-waiting,accent));
+    if (!settings.Family) {
+     if (waiting > 0) badges.Add(new KeyValuePair<int,Color>(waiting,amber));
+     if (others.Count-waiting > 0) badges.Add(new KeyValuePair<int,Color>(others.Count-waiting,accent));
+    } else PaintFamily(g, StripWidth-Px(28), 0);
     for (int i=0;i<badges.Count;i++) {
      var area = new Rectangle(StripWidth-Px(47)-i*Px(17),Px(4),Px(15),Px(15));
      using (var brush = new SolidBrush(badges[i].Value)) g.FillEllipse(brush,area);
      StripText(g,Math.Min(9,badges[i].Key).ToString(CultureInfo.InvariantCulture),tiny,area,Color.FromArgb(27,29,32),TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
     }
-    int radarWidth = StripWidth-Px(298)-lead-badges.Count*Px(17);
+    int radarWidth = StripWidth-Px(298)-lead-(settings.Family ? FamilyWidth : badges.Count*Px(17));
     bool celebrating = DateTime.Now < bannerUntil;
-    string headline = celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? RadarTitle() : activeSession.Project + " · " + activeSession.Label;
+    string headline = LevelBanner ?? (celebrating ? banner : NightIdle ? NightTitle : activeSession == null ? RadarTitle() : settings.Creature ? activeSession.Project : activeSession.Project + " · " + activeSession.Label);
     int orb = Mascot(g, Px(264)+lead, 0), lineShift = settings.Creature ? orb : 0;
     StripText(g,headline,celebrating ? bold : normal,new Rectangle(Px(264)+lead+orb,Px(3),radarWidth-orb,Px(17)),celebrating ? amber : NightIdle ? muted : StateColor(activeSession),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
     var detail = new List<string>();
@@ -1236,9 +1317,12 @@ namespace MeuClaudeWidget {
      }
      detail.Add(gitInfo.Summary);
     }
-    StripText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead+lineShift,Px(23),StripWidth-Px(298)-lead-lineShift,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
-    Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
-    using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,StripWidth-Px(17),Px(27),Px(4),Px(4));
+    int battery = NightIdle ? 0 : PaintBattery(g, Px(264)+lead+lineShift, Px(23), Px(13));
+    StripText(g,String.Join(" · ",detail),tiny,new Rectangle(Px(264)+lead+lineShift+battery,Px(23),StripWidth-Px(298)-lead-lineShift-battery,Px(13)),muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding|TextFormatFlags.EndEllipsis);
+    if (!PaintFlame(g, StripWidth-Px(15), Height-Px(6))) {
+     Color statusColor = busy ? accent : stale ? Color.FromArgb(225,174,84) : Color.FromArgb(110,170,134);
+     using (var dot = new SolidBrush(statusColor)) g.FillEllipse(dot,StripWidth-Px(17),Px(27),Px(4),Px(4));
+    }
    }
   }
   void DrawSpark(Graphics g, int index, Rectangle area, Color color) {
@@ -1253,8 +1337,9 @@ namespace MeuClaudeWidget {
   protected override void OnPaint(PaintEventArgs e) {
    base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
    if (settings.Compact) {
+    strip.W = StripWidth; strip.H = Height; strip.Ground = Height - Px(3.2f); strip.Surface = this; strip.Hover = hovering;
     PaintMovingCompact(g);
-    PaintNightAndWake(g); PaintDayLine(g);
+    PaintNightAndWake(g); PaintDayLine(g); PaintConstellation(g); PaintHappening(g);
     if (settings.Animations) ambient.PaintEdge(g, ClientRectangle, ScaleFactor, Px(7), DateTime.Now);
     PaintConfetti(g); return;
    }
@@ -1451,6 +1536,12 @@ namespace MeuClaudeWidget {
    var track = new DayTrack(); var nine = new DateTime(2026,11,4,9,15,0);
    track.Mark(nine, 1); track.Mark(nine.AddSeconds(20), 2); track.Mark(nine.AddSeconds(40), 1); track.Mark(nine.AddMinutes(1), 1);
    if (track.At(nine.Date, 555) != 2 || track.At(nine.Date, 556) != 1 || track.At(nine.Date, 557) != 0 || track.At(nine.Date.AddDays(1), 555) != 0) throw new Exception("Falha: linha do dia.");
+   // Weather from the taskbar button text.
+   var wx = WeatherNow.Parse("Widgets 21°C Pred. nublado"); if (wx.Temp != 21 || wx.Kind != "cloud") throw new Exception("Falha: clima nublado.");
+   wx = WeatherNow.Parse("Widgets 28°C Pred ensolarado"); if (wx.Temp != 28 || wx.Kind != "sun") throw new Exception("Falha: clima sol.");
+   wx = WeatherNow.Parse("Widgets -2°C Neve fraca"); if (wx.Temp != -2 || wx.Kind != "snow") throw new Exception("Falha: clima neve.");
+   wx = WeatherNow.Parse("Widgets 17°C Chuva fraca"); if (wx.Kind != "rain") throw new Exception("Falha: clima chuva.");
+   wx = WeatherNow.Parse(""); if (wx.Temp.HasValue || wx.Kind.Length > 0) throw new Exception("Falha: clima ausente.");
    // Morning summary: previous workday, time window, markdown cleanup and the transcript's last ask/answer.
    if (Recap.PreviousWorkday(new DateTime(2026,11,9)) != new DateTime(2026,11,6) || Recap.PreviousWorkday(day) != new DateTime(2026,11,3)) throw new Exception("Falha: bom dia dia útil anterior.");
    if (!Recap.Due(day.AddHours(8), "") || Recap.Due(day.AddHours(7), "") || Recap.Due(day.AddHours(13), "") || Recap.Due(day.AddHours(8), "2026-11-04") || Recap.Due(new DateTime(2026,11,7,8,0,0), ""))

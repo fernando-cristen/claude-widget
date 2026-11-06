@@ -1,4 +1,4 @@
-namespace MeuClaudeWidget {
+﻿namespace MeuClaudeWidget {
  using System;
  using System.Drawing;
  using System.Drawing.Drawing2D;
@@ -84,11 +84,10 @@ namespace MeuClaudeWidget {
    double now=MotionTime.Now;
    if(stopped || !settings.Animations || !settings.Compact) { FinishStripMotion(); ambientTimer.Stop(); return; }
    if(compactBoundsReady) ApplyCompactBounds(boundsMotion.Value(now));
-   bool effects=ambient.Transient(DateTime.Now) || ContentMoving(now) || (DateTime.Now-wakeAt).TotalSeconds<1.6;
+   bool effects=ambient.Transient(DateTime.Now) || ContentMoving(now) || (DateTime.Now-wakeAt).TotalSeconds<1.6 || CreatureFx;
    bool steady=LiveDecor || ambient.Continuous;
    if(!effects && !steady) ambientTimer.Stop();
    // Steady motion only (liquid, creature, comet): 15 fps is plenty; short events keep 30 fps.
-   if(!effects && steady && (++decorFrame%2)!=0) return;
    Invalidate();
   }
   void SetCompactBounds(Rectangle target,Rectangle allowed) {

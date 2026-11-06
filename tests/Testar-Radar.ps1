@@ -11,7 +11,7 @@ try {
     $settings=Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json'
     '{"model":"keep-model","permissions":{"allow":["Read"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo keep-existing"}]}]}}' | Set-Content -LiteralPath $settings -Encoding UTF8
     $shell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $installer=Join-Path $PSScriptRoot 'Integracao-Radar.ps1'
+    $installer=Join-Path $PSScriptRoot '..\scripts\Integracao-Radar.ps1'
     1..2 | ForEach-Object {
         & $shell -NoProfile -ExecutionPolicy Bypass -File $installer
         if ($LASTEXITCODE -ne 0) { throw 'Falha ao ativar no ambiente isolado.' }
@@ -27,7 +27,7 @@ try {
     if (@($c.hooks.Stop).Count -ne 2 -or @($c.hooks.PreToolUse).Count -ne 1) { throw 'Duplicacao de hooks.' }
     if ($c.hooks.PreToolUse[0].hooks[0].async -ne $true -or @($c.hooks.SubagentStart).Count -ne 1) { throw 'Hooks assincronos ou de subagentes ausentes.' }
     if (-not $c.statusLine.command) { throw 'Barra de status nao instalada.' }
-    $hook=Join-Path $PSScriptRoot 'RadarHook.ps1'
+    $hook=Join-Path $PSScriptRoot '..\scripts\RadarHook.ps1'
     $events=@(
         @('SessionStart','ready'), @('UserPromptSubmit','working'),
         @('PermissionRequest','waiting'), @('PostToolUse','working'),
@@ -51,7 +51,7 @@ try {
     }
     $record=Get-Content -LiteralPath $files[0].FullName -Raw | ConvertFrom-Json
     if ($record.Subagents -ne 1 -or $record.State -ne 'ended') { throw ('Contagem de subagentes incorreta: ' + $record.Subagents) }
-    $status=Join-Path $PSScriptRoot 'StatusLine.ps1'
+    $status=Join-Path $PSScriptRoot '..\scripts\StatusLine.ps1'
     $limits=@{five_hour=@{used_percentage=19;resets_at=1792704000};seven_day=@{used_percentage=77;resets_at='2026-10-29T13:00:00Z'}}
     $line=@{session_id='test-session';model=@{display_name='Opus'};context_window=@{used_percentage=41.6};cost=@{total_cost_usd=1.5};rate_limits=$limits} | ConvertTo-Json -Compress -Depth 4 | & $shell -NoProfile -ExecutionPolicy Bypass -File $status
     if ($line -ne 'Opus | contexto 42% | US$ 1,50') { throw ('Barra de status inesperada: ' + $line) }

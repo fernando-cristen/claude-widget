@@ -58,6 +58,25 @@ function Get-IssueLabel($clock, [int]$issue) {
     if ($task) { return '#' + $issue + ' ' + $task.Total + ' em andamento' }
     return '#' + $issue + ' fora de andamento'
 }
+# The widget's creature, in a few characters: its face follows this session's state, then its name and level.
+function Get-Creature([string]$id) {
+    try {
+        $file = Join-Path $env:LOCALAPPDATA 'MeuClaudeWidget\bicho.json'
+        if (-not (Test-Path -LiteralPath $file)) { return '' }
+        $pet = [IO.File]::ReadAllText($file) | ConvertFrom-Json
+        $state = ''
+        $radar = Join-Path $env:LOCALAPPDATA ('MeuClaudeWidget\radar\' + $id + '.json')
+        if (Test-Path -LiteralPath $radar) { $state = [string](([IO.File]::ReadAllText($radar) | ConvertFrom-Json).State) }
+        $face = switch ($state) {
+            'working' { '(•_•)⌨' } 'background' { '(•_•)⌨' } 'waiting' { '(°o°)!' } 'done' { '\(^o^)/' } 'error' { '(×_×)' }
+            default { if ($pet.Night) { '(-.-)zZ' } else { '(•‿•)' } }
+        }
+        $label = $face
+        if ($pet.Name) { $label += ' ' + $pet.Name }
+        if ($pet.Level) { $label += ' nv' + $pet.Level }
+        return $label
+    } catch { return '' }
+}
 try {
     [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
     $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -71,6 +90,8 @@ try {
     if (-not $data.session_id) { [Console]::Out.Write(($parts -join ' | ')); exit 0 }
     $hash = [Security.Cryptography.SHA256]::Create()
     try { $id = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$data.session_id)))).Replace('-','').ToLowerInvariant() } finally { $hash.Dispose() }
+    $creature = Get-Creature $id
+    if ($creature) { $parts = @($creature) + $parts }
     $folder = Join-Path $env:LOCALAPPDATA 'MeuClaudeWidget\radar\status'
     [IO.Directory]::CreateDirectory($folder) | Out-Null
     $path = Join-Path $folder ($id + '.json')

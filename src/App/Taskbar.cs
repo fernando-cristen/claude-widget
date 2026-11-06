@@ -11,6 +11,7 @@ namespace MeuClaudeWidget {
  public sealed class TaskbarSlot {
   public Rectangle Bar, LeftGap, RightGap;
   public bool Hidden, Fullscreen;
+  public string Weather = ""; // accessible name of the Windows weather button, e.g. "Widgets 21°C Pred. nublado"
  }
  public static class Taskbar {
   [StructLayout(LayoutKind.Sequential)] struct R { public int Left, Top, Right, Bottom; }
@@ -37,7 +38,7 @@ namespace MeuClaudeWidget {
     foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, Condition.TrueCondition)) {
      string id = e.Current.AutomationId ?? ""; var r = Rect(e.Current.BoundingRectangle);
      if (r.IsEmpty || r.Height < 16) continue;
-     if (id == "WidgetsButton") { if (r.Left < bar.Left + bar.Width / 3) left = Math.Max(left, r.Right); }
+     if (id == "WidgetsButton") { slot.Weather = e.Current.Name ?? ""; if (r.Left < bar.Left + bar.Width / 3) left = Math.Max(left, r.Right); }
      else if (id == "StartButton" || id == "SearchButton" || id == "TaskViewButton" || id == "CopilotButton" || id.StartsWith("Appid:", StringComparison.Ordinal)) {
       groupLeft = Math.Min(groupLeft, r.Left); groupRight = Math.Max(groupRight, r.Right);
      } else if (id == "SystemTrayIcon" || e.Current.ClassName == "SystemTray.NormalButton") trayLeft = Math.Min(trayLeft, r.Left);

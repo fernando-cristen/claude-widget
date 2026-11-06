@@ -34,11 +34,13 @@ namespace MeuClaudeWidget {
   static readonly Color ClaudeOrange = Color.FromArgb(216,156,125);
   DayTrack dayTrack = new DayTrack(); DateTime dayTrackSaved = DateTime.MinValue;
   bool wasNight; DateTime wakeAt = DateTime.MinValue; double loggedToday = -1; string loggedDay = ""; bool loggedBusy;
-  string mood = "idle"; DateTime moodSince = DateTime.Now; int decorFrame;
+  string mood = "idle"; DateTime moodSince = DateTime.Now;
 
   // A5: after the workday (and on weekends) the strip rests: dimmer, still, the creature sleeps.
+  internal bool ForceNight { get; set; } // test renders only
   bool Night {
    get {
+    if (ForceNight) return true;
     if (!settings.NightMode || preview) return false;
     DateTime n = DateTime.Now;
     return !WorkDay.IsWorkday(n) || n.TimeOfDay < WorkDay.Windows[0][0] || n >= WorkDay.DayEnd(n);
@@ -53,8 +55,9 @@ namespace MeuClaudeWidget {
    dayTrack = DayTrack.Load(); wasNight = Night;
    RefreshAccent();
    SystemEvents.UserPreferenceChanged += OnPreferenceChanged;
+   InitDesk();
   }
-  void DisposeStyle() { SystemEvents.UserPreferenceChanged -= OnPreferenceChanged; dayTrack.Save(); }
+  void DisposeStyle() { SystemEvents.UserPreferenceChanged -= OnPreferenceChanged; dayTrack.Save(); DisposeDesk(); }
   void OnPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) {
    if (IsHandleCreated && !stopped) BeginInvoke(new Action(RefreshAccent));
   }
@@ -89,6 +92,7 @@ namespace MeuClaudeWidget {
     string today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     if (loggedDay != today) FetchLoggedToday(today);
    }
+   BichoTick();
    if (LiveDecor || (DateTime.Now - wakeAt).TotalSeconds < 1.6) StartMotionTimer();
   }
   async void FetchLoggedToday(string today) {
@@ -139,12 +143,29 @@ namespace MeuClaudeWidget {
         float bx = pill.X + level * (0.22f + 0.27f * i) + (float)Math.Sin(t * 2 + i) * Px(1), by = pill.Bottom - (float)p * pill.Height, br = Math.Max(1f, Px(1.1f));
         using (var bubble = new SolidBrush(Color.FromArgb((int)(110 * (1 - p)), 255, 255, 255))) g.FillEllipse(bubble, bx - br, by - br, br * 2, br * 2);
        }
+      // Boiling near the limit: big fast bubbles all over the liquid.
+      if (value.HasValue && value.Value >= 90 && settings.Animations && !Night)
+       for (int i = 0; i < 6; i++) {
+        double p = (t * (1.3 + i * 0.21) + i * 0.29) % 1.0;
+        float bx = pill.X + level * ((i * 0.173f + 0.08f) % 1f), by = pill.Bottom - (float)p * pill.Height, br = Math.Max(1.2f, Px(1.3f + (i % 3) * .35f));
+        using (var bubble = new Pen(Color.FromArgb((int)(170 * (1 - p)), 255, 255, 255), 1f)) g.DrawEllipse(bubble, bx - br, by - br, br * 2, br * 2);
+       }
      }
      // Glassy top of the tube.
      using (var shine = new LinearGradientBrush(new RectangleF(pill.X, pill.Y - 1, pill.Width, pill.Height * .5f + 2), Color.FromArgb(42, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
       g.FillRectangle(shine, pill.X, pill.Y, pill.Width, pill.Height * .5f);
     } finally { g.Restore(saved); }
     using (var rim = new Pen(Color.FromArgb(26, 255, 255, 255))) g.DrawPath(rim, shape);
+    // Steam curling up from a boiling tube.
+    if (settings.Liquid && value.HasValue && value.Value >= 90 && settings.Animations && !Night) {
+     double t = MotionTime.Now / 1000.0; var mode = g.SmoothingMode; g.SmoothingMode = SmoothingMode.AntiAlias;
+     float level = (float)(pill.Width * Math.Min(100, value.Value) / 100);
+     for (int i = 0; i < 3; i++) {
+      double p = (t * 0.55 + i / 3.0) % 1.0; float x = pill.X + level * (0.3f + i * 0.25f) + (float)Math.Sin(t * 3 + i * 2) * Px(2), y = pill.Y + pill.Height * .4f - (float)p * Px(9);
+      using (var steam = new Pen(Color.FromArgb((int)(120 * Math.Sin(p * Math.PI)), 236, 236, 242), Math.Max(1f, Px(1.2f)))) g.DrawArc(steam, x - Px(1.5f), y - Px(2), Px(3), Px(4), 90 + (float)(p * 180), 160);
+     }
+     g.SmoothingMode = mode;
+    }
    }
   }
 
@@ -186,93 +207,6 @@ namespace MeuClaudeWidget {
    g.SmoothingMode = mode;
   }
   int Kind(DateTime today, int minute, int nowMinute, bool workday) { return !workday || minute > nowMinute ? -1 : dayTrack.At(today, minute); }
-
-  // A4: an original pixel creature living next to the project name. Draws itself and returns the room it takes.
-  static readonly string[] CreatureBody = {
-   "....####....",
-   "..########..",
-   ".##########.",
-   ".##########.",
-   "############",
-   "############",
-   ".##########.",
-   "..########.."
-  };
-  string CurrentMood() {
-   if (DateTime.Now < bannerUntil) return "dance";
-   if (Night && !SessionBusy) return "sleep";
-   if (activeSession == null || activeSession.Silent) return "idle";
-   switch (activeSession.Effective) {
-    case "working": case "background": return "work";
-    case "waiting": return "wave";
-    case "done": return "happy";
-    case "error": return "oops";
-    default: return "idle";
-   }
-  }
-  int Mascot(Graphics g, int x, int top) {
-   if (settings.Creature) { PaintCreature(g, x, top); return Px(29); }
-   if (settings.Animations) { ambient.PaintOrb(g, x + Px(5), Px(11.5f), ScaleFactor, DateTime.Now); return Px(15); }
-   return 0;
-  }
-  void PaintCreature(Graphics g, int x, int top) {
-   DateTime now = DateTime.Now; string next = CurrentMood();
-   if (next != mood) { mood = next; moodSince = now; }
-   double t = settings.Animations && !Night ? MotionTime.Now / 1000.0 : 0, since = (now - moodSince).TotalSeconds;
-   float px = Math.Max(1f, ScaleFactor * 1.85f);
-   // Whole-pixel motion keeps the pixel-art crisp.
-   int lift = 0;
-   if (mood == "work") lift = ((int)(t * 4) % 2 == 0) ? 0 : 1;
-   else if (mood == "idle") lift = Math.Sin(t * 1.4) > .6 ? 1 : 0;
-   else if (mood == "wave") lift = (int)Math.Round(Math.Abs(Math.Sin(t * 5)) * 2);
-   else if (mood == "happy" && since < 1.8) lift = (int)Math.Round(Math.Abs(Math.Sin(since * Math.PI / 0.45)) * 4);
-   else if (mood == "dance") lift = (int)Math.Round(Math.Abs(Math.Sin(t * Math.PI / 0.4)) * 3);
-   int tilt = mood == "dance" ? (((int)(t / 0.4)) % 2 == 0 ? -1 : 1) : 0;
-   float ox = x + Px(2), oy = top + Px(11) - lift * px;
-   Color body = mood == "oops" ? red : accent;
-   if (mood == "sleep") body = Color.FromArgb((body.R + 110) / 2, (body.G + 112) / 2, (body.B + 118) / 2);
-   Color dark = Color.FromArgb(28, 26, 30), light = Color.FromArgb(Math.Min(255, body.R + 55), Math.Min(255, body.G + 55), Math.Min(255, body.B + 55));
-   Color shade = Color.FromArgb(body.R * 3 / 4, body.G * 3 / 4, body.B * 3 / 4);
-   var mode = g.SmoothingMode; g.SmoothingMode = SmoothingMode.None;
-   Action<int,int,Color> dot = (cx, cy, c) => { using (var b = new SolidBrush(c)) g.FillRectangle(b, ox + (cx + (cy < 4 ? tilt : 0)) * px, oy + cy * px, px + .5f, px + .5f); };
-   // Shadow on the "floor" shrinks while it jumps.
-   g.SmoothingMode = SmoothingMode.AntiAlias;
-   float sw = px * (10 - lift * 1.2f);
-   using (var shadow = new SolidBrush(Color.FromArgb(Math.Max(20, 70 - lift * 12), 0, 0, 0))) g.FillEllipse(shadow, ox + 6 * px - sw / 2, top + Px(11) + 9.6f * px, sw, px * 1.6f);
-   g.SmoothingMode = SmoothingMode.None;
-   for (int r = 0; r < CreatureBody.Length; r++)
-    for (int c = 0; c < 12; c++)
-     if (CreatureBody[r][c] == '#') dot(c, r, r == 7 || (r >= 4 && (c == 0 || c == 11)) ? shade : body);
-   dot(3, 1, light); dot(4, 1, light); dot(2, 2, light); // glossy top
-   // Feet (they alternate while dancing).
-   bool step = mood == "dance" && ((int)(t / 0.4)) % 2 == 0;
-   int lf = step ? -1 : 0, rf = mood == "dance" && !step ? -1 : 0;
-   dot(3, 8 + lf, shade); dot(2, 9 + lf, shade); dot(3, 9 + lf, shade);
-   dot(8, 8 + rf, shade); dot(8, 9 + rf, shade); dot(9, 9 + rf, shade);
-   // Eyes.
-   bool blink = mood == "idle" && (t % 3.6) < 0.14;
-   if (mood == "sleep" || blink) { dot(3, 5, dark); dot(4, 5, dark); dot(7, 5, dark); dot(8, 5, dark); }
-   else if (mood == "happy" || mood == "dance") { dot(3, 5, dark); dot(4, 4, dark); dot(5, 5, dark); dot(6, 5, dark); dot(7, 4, dark); dot(8, 5, dark); }
-   else if (mood == "oops") { dot(3, 4, dark); dot(5, 4, dark); dot(4, 5, dark); dot(3, 6, dark); dot(5, 6, dark); dot(6, 4, dark); dot(8, 4, dark); dot(7, 5, dark); dot(6, 6, dark); dot(8, 6, dark); }
-   else { int ey = mood == "work" ? 5 : 4; dot(4, ey, dark); dot(4, ey + 1, dark); dot(7, ey, dark); dot(7, ey + 1, dark); }
-   if (mood == "wave") { dot(5, 7, dark); dot(6, 7, dark); }
-   if (mood == "happy" || mood == "dance") { dot(2, 6, Color.FromArgb(200, 240, 130, 150)); dot(9, 6, Color.FromArgb(200, 240, 130, 150)); }
-   // Arms.
-   if (mood == "work") { bool up = ((int)(t * 8)) % 2 == 0; dot(-1, up ? 5 : 6, shade); dot(12, up ? 6 : 5, shade); }
-   else if (mood == "wave") { bool up = ((int)(t * 4)) % 2 == 0; dot(-1, 6, shade); dot(12, up ? 2 : 3, shade); dot(up ? 13 : 12, up ? 1 : 2, shade); }
-   else if (mood == "dance") { bool up = ((int)(t / 0.4)) % 2 == 0; dot(-1, up ? 2 : 4, shade); dot(12, up ? 4 : 2, shade); }
-   else { dot(-1, 6, shade); dot(12, 6, shade); }
-   g.SmoothingMode = mode;
-   // "!" when it needs you; floating "z" while it sleeps.
-   if (mood == "wave" && ((int)(t * 3)) % 2 == 0)
-    using (var mark = new SolidBrush(amber)) { g.FillRectangle(mark, ox + 5.5f * px, oy - px * 6.5f, px, px * 3); g.FillRectangle(mark, ox + 5.5f * px, oy - px * 2.5f, px, px); }
-   if (mood == "sleep")
-    using (var font = new Font("Segoe UI Semibold", 6.5f))
-     for (int i = 0; i < 2; i++) {
-      double p = ((MotionTime.Now / 1000.0) * 0.45 + i * 0.5) % 1.0; // the "z" keeps drifting even at night (it is tiny)
-      using (var b = new SolidBrush(Color.FromArgb((int)(170 * (1 - p)), 200, 200, 210))) g.DrawString("z", font, b, ox + 12 * px + (float)p * Px(4), top + Px(8) - (float)p * Px(9));
-     }
-  }
 
   // Time on the issue against its estimate: < 70% green, up to 100% amber (pulsing from 85%), beyond it red with the overrun outside.
   int ringLevel = -1, ringTask; DateTime ringCrossed = DateTime.MinValue;

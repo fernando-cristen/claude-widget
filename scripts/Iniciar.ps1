@@ -3,12 +3,10 @@ $ErrorActionPreference = 'Stop'
 try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
-    $source = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Widget.cs'), [System.Text.Encoding]::UTF8)
-    $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Radar.cs'), [System.Text.Encoding]::UTF8)
-    $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Redmine.cs'), [System.Text.Encoding]::UTF8)
-    $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Placar.cs'), [System.Text.Encoding]::UTF8)
-    $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Bomdia.cs'), [System.Text.Encoding]::UTF8)
-    foreach ($extra in @('Ui.cs','Telas.cs','Taskbar.cs','Vida.cs','Transicoes.cs','Estilo.cs')) { $source += "`r`n" + [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot $extra), [System.Text.Encoding]::UTF8) }
+    # All the C# under src\ is compiled together: Widget.cs first (it holds the file-level usings), then the rest.
+    $src = Join-Path (Split-Path $PSScriptRoot -Parent) 'src'
+    $files = @(Get-ChildItem -LiteralPath $src -Recurse -Filter '*.cs' | Sort-Object { if ($_.Name -eq 'Widget.cs') { '' } else { $_.FullName } })
+    $source = ($files | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8) }) -join "`r`n"
     $references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Net.Http.dll', 'System.Web.Extensions.dll', 'System.Security.dll')
     # UI Automation (finds the weather button and the taskbar icons) lives in the WPF folder of .NET Framework.
     foreach ($name in @('UIAutomationClient', 'UIAutomationTypes', 'WindowsBase')) { $references += [System.Reflection.Assembly]::Load($name + ', Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35').Location }
