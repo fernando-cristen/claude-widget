@@ -434,6 +434,13 @@ VISUAL DA FAIXA
 • Jeito de vivo: pisca em intervalos aleatórios (às vezes duas vezes), olha
   em volta quando está à toa e, a cada 20–40 s parado, faz uma mania: coça a
   cabeça, balança os pés, assobia, boceja ou se espreguiça.
+  Metade das vezes é a mania do formato dele: o gatinho lambe a patinha, o
+  fantasminha fica transparente e volta, o robozinho pisca a antena e faz
+  "bip" recalibrando, e o redondinho coça a orelha com o pé.
+• Cutucado dormindo, ele acorda de mau humor: abre um olho só, faz cara
+  feia, esfrega os olhos e volta a dormir.
+• Deixe o mouse parado bem ao lado dele: ele estica a mãozinha tentando
+  tocar no cursor.
 • Animações a ~60 quadros por segundo (usa um pouco mais de CPU: ~1,5%).
 • Com o bichinho ligado, o título mostra só o projeto: o estado está nele.
 Menu › "Visual da faixa" liga/desliga cada um (todos ligados por padrão).

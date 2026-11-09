@@ -58,7 +58,9 @@
   string batterySession = ""; double batteryCtx = -1; DateTime rechargeAt = DateTime.MinValue;
   string streakDay = ""; bool streakBusy;
   // Creature interactions and events.
-  readonly List<DateTime> pokes = new List<DateTime>(); DateTime hopAt = DateTime.MinValue, dizzyUntil = DateTime.MinValue;
+  readonly List<DateTime> pokes = new List<DateTime>(); DateTime hopAt = DateTime.MinValue, dizzyUntil = DateTime.MinValue, grumpyAt = DateTime.MinValue;
+  // The mouse pointer: when it rests right next to the creature, it tries to touch it.
+  Point lastCursor; DateTime cursorMovedAt = DateTime.Now; int pawSide, pawRow;
   DateTime failAt = DateTime.MinValue, cheerAt = DateTime.MinValue, levelUpAt = DateTime.MinValue; string failKey = "", mainState = "";
   // The creature is painted on two stages: the taskbar strip and the desktop pet (bigger). Each keeps its own geometry.
   readonly Stage strip = new Stage(), desk = new Stage { Zoom = 2.8f }; Stage current;
@@ -88,7 +90,7 @@
   bool CreatureFx {
    get {
     DateTime n = DateTime.Now;
-    return (n - hopAt).TotalSeconds < 1 || dizzyUntil > n || (n - failAt).TotalSeconds < 3.2 || (n - levelUpAt).TotalSeconds < 3 || (n - cheerAt).TotalSeconds < 2 || (n - wakeAt).TotalSeconds < 3.5 || HappeningActive || DrainActive || (n - planeAt).TotalSeconds < 2.4 || (n - trophyAt).TotalSeconds < 3;
+    return (n - hopAt).TotalSeconds < 1 || dizzyUntil > n || (n - grumpyAt).TotalSeconds < 2.6 || (n - failAt).TotalSeconds < 3.2 || (n - levelUpAt).TotalSeconds < 3 || (n - cheerAt).TotalSeconds < 2 || (n - wakeAt).TotalSeconds < 3.5 || HappeningActive || DrainActive || (n - planeAt).TotalSeconds < 2.4 || (n - trophyAt).TotalSeconds < 3;
    }
   }
 
@@ -191,7 +193,13 @@
   // Click on the creature: a laughing hop; five quick clicks make it dizzy.
   bool PokeCreature(Point at) {
    if (!settings.Creature || stage.Creature.IsEmpty || !stage.Creature.Contains(at)) return false;
-   DateTime n = DateTime.Now; pokes.Add(n); pokes.RemoveAll(p => (n - p).TotalSeconds > 3);
+   DateTime n = DateTime.Now;
+   if (mood == "sleep" || mood == "doze" || mood == "nap" || mood == "grumpy") {
+    if ((n - grumpyAt).TotalSeconds > 2.4) { grumpyAt = n; Say(Pick("Hmm…", "Me deixa dormir…", "Quê? Zzz…"), true); }
+    if (stage == desk && NightIdle) deskNightAt = n;
+    StartMotionTimer(); Invalidate(); return true;
+   }
+   pokes.Add(n); pokes.RemoveAll(p => (n - p).TotalSeconds > 3);
    if (pokes.Count >= 5) { dizzyUntil = n.AddSeconds(3.2); pokes.Clear(); Say("Tô tonto…", true); } else { hopAt = n; Say(Pick("Hihi!", "Ei!", "Cócegas não!")); }
    if (stage == desk && NightIdle) deskNightAt = n; // at night a poke switches the lamp on for a moment
    StartMotionTimer(); Invalidate(); return true;
@@ -201,6 +209,7 @@
   string CurrentMood() {
    DateTime n = DateTime.Now;
    if (dizzyUntil > n) return "dizzy";
+   if ((n - grumpyAt).TotalSeconds < 2.4) return "grumpy";
    if ((n - hopAt).TotalSeconds < 0.9) return "laugh";
    if ((n - failAt).TotalSeconds < 3) return "shock";
    if (n < bannerUntil) return "dance";
@@ -244,7 +253,7 @@
   string Hat(string mood) {
    DateTime d = DateTime.Now;
    if (d < bannerUntil) return "party";
-   if (mood == "sleep" || mood == "nap") return "nightcap";
+   if (mood == "sleep" || mood == "nap" || (mood == "grumpy" && (Night || d.Hour == 13))) return "nightcap";
    if (d.Month == 12) return "santa";
    if (d.Month == 10 && d.Day == 31) return "witch";
    if (d.Month == 6) return "straw";
@@ -288,13 +297,26 @@
    }
    if (n < gazeUntil) { dx = gazeX; dy = gazeY; } else { dx = 0; dy = 0; }
   }
+  // True when the pointer has been resting for a moment just beside its body (not on it): it reaches out to it.
+  bool Pawing(float px) {
+   var surface = stage.Surface; if (surface == null || !surface.IsHandleCreated || stage.Head.IsEmpty || preview) return false;
+   Point screen = Cursor.Position; DateTime n = DateTime.Now;
+   if (screen != lastCursor) { lastCursor = screen; cursorMovedAt = n; return false; }
+   if ((n - cursorMovedAt).TotalSeconds < .6) return false;
+   Point c = surface.PointToClient(screen); float dx = c.X - stage.Head.X, dy = c.Y - (stage.Head.Y + 3 * px);
+   if (Math.Abs(dx) < 6.5f * px || Math.Abs(dx) > 12 * px || dy < -7 * px || dy > 5 * px) return false;
+   pawSide = dx > 0 ? 1 : -1; pawRow = dy < -2 * px ? -1 : dy > 2 * px ? 1 : 0;
+   return true;
+  }
   string fidget = ""; DateTime fidgetAt = DateTime.MinValue, nextFidget = DateTime.Now.AddSeconds(25);
   static readonly string[] Fidgets = { "scratch", "swing", "whistle", "yawn", "reachUp" };
+  // Each shape's own habit: the cat licks its paw, the ghost fades out and back, the robot recalibrates, the round one scratches its ear with a foot.
+  string ShapeFidget { get { switch (Shape) { case "cat": return "lick"; case "ghost": return "fade"; case "robot": return "beep"; default: return "earScratch"; } } }
   // Every 20–40 s of being idle: scratches its head, swings its feet, whistles, yawns or stretches.
   string Fidget(DateTime n, string m) {
    if (m != "idle") { fidget = ""; if (nextFidget < n.AddSeconds(15)) nextFidget = n.AddSeconds(15 + life.Next(15)); return ""; }
    if (fidget.Length > 0 && (n - fidgetAt).TotalSeconds > 2.6) fidget = "";
-   if (fidget.Length == 0 && n >= nextFidget) { fidget = Fidgets[life.Next(Fidgets.Length)]; fidgetAt = n; nextFidget = n.AddSeconds(20 + life.Next(21)); }
+   if (fidget.Length == 0 && n >= nextFidget) { fidget = life.Next(2) == 0 ? ShapeFidget : Fidgets[life.Next(Fidgets.Length)]; fidgetAt = n; nextFidget = n.AddSeconds(20 + life.Next(21)); }
    return fidget;
   }
 
@@ -377,25 +399,29 @@
    bool groove = MusicOn && !still && act.Length == 0 && !running && stage.Pose.Length == 0 && (mood == "idle" || mood == "happy");
    if (groove) { act = "groove"; lift = (int)Math.Round(Math.Abs(Math.Sin(t * Math.PI * 2)) * 2); }
    else if (MusicOn && !still && mood == "work" && act.Length == 0) lift = ((int)(t * 4)) % 2;
+   if (act.Length == 0 && !running && stage.Pose.Length == 0 && stage.Act.Length == 0 && !still && (mood == "idle" || mood == "happy") && Pawing(px)) act = "paw";
    string fid = Fidget(now, mood); double fe = (now - fidgetAt).TotalSeconds;
    if (fid.Length > 0 && act.Length == 0 && !running && stage.Pose.Length == 0 && stage.Act.Length == 0 && !still) {
     act = fid;
     if (fid == "reachUp" || (fid == "yawn" && fe > .9 && fe < 1.9)) lift = 1;
+    if (fid == "fade") lift = (int)Math.Round(Math.Sin(Math.Min(1, fe / 2.4) * Math.PI) * 2);
    }
    if (stage.Act.Length > 0 && act != "held" && act != "land" && act != "shake" && mood != "laugh" && mood != "dizzy") { act = stage.Act; if (act == "pout" || act == "fish" || act == "hide") lift = 0; if (act == "groove") lift = (int)Math.Round(Math.Abs(Math.Sin(t * Math.PI * 2)) * 2); }
    int tilt = mood == "dance" ? (((int)(t / 0.4)) % 2 == 0 ? -1 : 1) : mood == "dizzy" ? (int)Math.Round(Math.Sin(t * 6)) : 0;
    if (groove) tilt = ((int)(t * 2)) % 2 == 0 ? -1 : 1;
    if (act == "shake") tilt = ((int)(land * 22)) % 2 == 0 ? -1 : 1;
    else if (act == "held") tilt = stage.Swing > .8f ? 1 : stage.Swing < -.8f ? -1 : 0;
+   else if (act == "earScratch") tilt = 1;
    float baseY = top + Pz(9.5f), ox = x + px + stage.ChaseX, oy = baseY - lift * px + sink * px;
    stage.Creature = new RectangleF(ox - px, top + Pz(2), px * 15, Pz(36));
    stage.Head = new PointF(ox + 6 * px, oy + 2 * px);
    string shape = Shape; string[] rows = ShapeRows(t);
    Color body = mood == "oops" ? red : CreatureTint;
-   if (mood == "sleep" || mood == "doze" || mood == "nap") body = Color.FromArgb((body.R + 110) / 2, (body.G + 112) / 2, (body.B + 118) / 2);
+   if (mood == "sleep" || mood == "doze" || mood == "nap" || mood == "grumpy") body = Color.FromArgb((body.R + 110) / 2, (body.G + 112) / 2, (body.B + 118) / 2);
    if (mood == "shock" && (now - failAt).TotalSeconds < 0.35) body = Color.FromArgb(250, 248, 236);
    if (shape == "ghost") body = Color.FromArgb(226, Math.Min(255, body.R + 30), Math.Min(255, body.G + 30), Math.Min(255, body.B + 30));
-   Color dark = shape == "robot" ? Color.FromArgb(120, 232, 255) : Color.FromArgb(28, 26, 30), light = Color.FromArgb(Math.Min(255, body.R + 55), Math.Min(255, body.G + 55), Math.Min(255, body.B + 55));
+   if (act == "fade") { double k = Math.Sin(Math.Min(1, (now - fidgetAt).TotalSeconds / 2.4) * Math.PI); body = Color.FromArgb((int)(body.A * (1 - .8 * k)), body.R, body.G, body.B); }
+   Color dark = shape == "robot" ? Color.FromArgb(120, 232, 255) : Color.FromArgb(28, 26, 30), light = Color.FromArgb(body.A, Math.Min(255, body.R + 55), Math.Min(255, body.G + 55), Math.Min(255, body.B + 55));
    Color shade = Color.FromArgb(body.A, body.R * 3 / 4, body.G * 3 / 4, body.B * 3 / 4), white = Color.FromArgb(240, 244, 246, 250);
    string hand = mood == "work" ? "" : HandItem();
    bool sunny = settings.WeatherFx && weather.Kind == "sun" && !Night, rainy = settings.WeatherFx && (weather.Kind == "rain" || weather.Kind == "storm");
@@ -405,7 +431,9 @@
    int lookX, lookY; LookAt(ox + 6 * px, oy + 4 * px, out lookX, out lookY);
    if (sees) { lookX = seeX; lookY = seeY; }
    else if (lookX == 0 && lookY == 0 && !stage.Hover && !still && mood == "idle" && act.Length == 0) Gaze(now, out lookX, out lookY);
-   bool looking = lookX != 0 || lookY != 0 || stage.Hover || sees;
+   if (act == "paw") { lookX = pawSide; lookY = pawRow < 0 ? -1 : 0; }
+   if (act == "beep") { int k = ((int)((now - fidgetAt).TotalSeconds * 5)) % 4; lookX = k == 0 ? -1 : k == 2 ? 1 : 0; lookY = 0; }
+   bool looking = lookX != 0 || lookY != 0 || stage.Hover || sees || act == "paw" || act == "beep";
    var mode = g.SmoothingMode;
    g.SmoothingMode = SmoothingMode.AntiAlias;
    float sw = px * (10 - lift * 1.2f);
@@ -436,6 +464,11 @@
      int a = (int)Math.Round(Math.Sin(t * (act == "held" ? 9 : 3.2)));
      for (int r = 8; r <= 10; r++) { p.Dot(3 + (r == 10 ? a : 0), r, shade); p.Dot(8 + (r == 10 ? -a : 0), r, shade); }
     }
+    else if (act == "earScratch") {
+     bool a = ((int)(t * 9)) % 2 == 0;
+     p.Dot(3, 8, shade); p.Dot(2, 9, shade); p.Dot(3, 9, shade);
+     p.Dot(9, 7.6f, shade); p.Dot(10.2f, 6.6f, shade); p.Dot(11.2f, 5.6f, shade); p.Dot(12, a ? 3.6f : 4.4f, shade);
+    }
     else if (mood != "doze" && mood != "nap") {
      bool step = (mood == "dance" && ((int)(t / 0.4)) % 2 == 0) || (running && ((int)(t * 12)) % 2 == 0);
      int lf = step ? -1 : 0, rf = ((mood == "dance" || running) && !step) || (mood == "tap" && ((int)(t * 3)) % 2 == 0) ? -1 : 0;
@@ -445,7 +478,13 @@
     }
     // Face.
     bool blink = !still && act != "held" && act != "land" && act != "pout" && (mood == "idle" || mood == "work" || mood == "wave" || mood == "tap" || mood == "cross" || mood == "eat") && Blinking(now);
-    if (act == "yawn" && fe < 1.9) { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); float o = fe < .3 ? 0 : 1; p.Row(6, 5, 6, dark); if (o > 0) p.Row(7, 5, 6, Color.FromArgb(170, 70, 70)); }
+    if (mood == "grumpy") {
+     double gr = (now - grumpyAt).TotalSeconds;
+     if (gr < .9) { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 4, dark); p.Dot(7, 5, dark); p.Dot(6, 3, dark); p.Dot(7, 3, dark); p.Dot(8, 2.5f, dark); p.Dot(4, 7, dark); p.Row(6, 5, 6, dark); p.Dot(7, 7, dark); }
+     else if (gr < 1.8) { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); p.Row(7, 5, 6, dark); }
+     else { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); p.Row(6, 5, 6, dark); p.Row(7, 5, 6, Color.FromArgb(170, 70, 70)); }
+    }
+    else if (act == "yawn" && fe < 1.9) { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); float o = fe < .3 ? 0 : 1; p.Row(6, 5, 6, dark); if (o > 0) p.Row(7, 5, 6, Color.FromArgb(170, 70, 70)); }
     else if (act == "held" || act == "land") { p.Dot(3, 4, dark); p.Dot(4, 4, dark); p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 4, dark); p.Dot(8, 4, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); p.Dot(5.5f, 6.5f, dark); }
     else if (act == "pout") { p.Dot(3, 3, dark); p.Dot(8, 3, dark); p.Dot(4, 4, dark); p.Dot(4, 5, dark); p.Dot(7, 4, dark); p.Dot(7, 5, dark); p.Dot(4, 7, dark); p.Row(6, 5, 6, dark); p.Dot(7, 7, dark); }
     else if (mood == "dizzy") {
@@ -461,7 +500,7 @@
      p.Dot(3, 4, Color.FromArgb(160, 255, 255, 255)); p.Dot(7, 4, Color.FromArgb(160, 255, 255, 255));
     }
     else if (mood == "sleep" || mood == "doze" || mood == "nap" || blink) { p.Dot(3, 5, dark); p.Dot(4, 5, dark); p.Dot(7, 5, dark); p.Dot(8, 5, dark); }
-    else if (mood == "happy" || mood == "dance" || act == "groove") { p.Dot(3, 5, dark); p.Dot(4, 4, dark); p.Dot(5, 5, dark); p.Dot(6, 5, dark); p.Dot(7, 4, dark); p.Dot(8, 5, dark); }
+    else if (mood == "happy" || mood == "dance" || act == "groove" || act == "lick" || act == "earScratch") { p.Dot(3, 5, dark); p.Dot(4, 4, dark); p.Dot(5, 5, dark); p.Dot(6, 5, dark); p.Dot(7, 4, dark); p.Dot(8, 5, dark); }
     else if (mood == "oops") { p.Dot(3, 4, dark); p.Dot(5, 4, dark); p.Dot(4, 5, dark); p.Dot(3, 6, dark); p.Dot(5, 6, dark); p.Dot(6, 4, dark); p.Dot(8, 4, dark); p.Dot(7, 5, dark); p.Dot(6, 6, dark); p.Dot(8, 6, dark); }
     else if (mood == "tap" || mood == "cross") { p.Dot(3, 3, dark); p.Dot(4, 3, dark); p.Dot(7, 3, dark); p.Dot(8, 3, dark); p.Dot(4 + lookX, 5, dark); p.Dot(7 + lookX, 5, dark); p.Dot(5, 6, dark); p.Dot(6, 6, dark); }
     else {
@@ -471,7 +510,7 @@
      if (mood == "eat") { bool chew = ((int)(t * 4)) % 2 == 0; p.Dot(5, 6, dark); if (chew) p.Dot(6, 6, dark); }
     }
     if (mood == "wave") { p.Dot(5, 6, dark); p.Dot(6, 6, dark); }
-    if (act == "wow" || act == "point" || act == "reach" || act == "whistle") { p.Dot(5.5f, 6, dark); p.Dot(5.5f, 7, dark); } // "oh!" (or whistling)
+    if (act == "wow" || act == "point" || act == "reach" || act == "whistle" || act == "paw") { p.Dot(5.5f, 6, dark); p.Dot(5.5f, 7, dark); } // "oh!" (or whistling)
     if (act == "perch" || act == "bye") { p.Dot(2, 6, Color.FromArgb(200, 240, 130, 150)); p.Dot(9, 6, Color.FromArgb(200, 240, 130, 150)); p.Dot(5, 6, dark); p.Dot(6, 6, dark); }
     if (mood == "happy" || mood == "dance" || mood == "laugh") { p.Dot(2, 6, Color.FromArgb(200, 240, 130, 150)); p.Dot(9, 6, Color.FromArgb(200, 240, 130, 150)); }
     if (level >= 7 && !(cold && mood != "dance")) { Color bow = Color.FromArgb(214, 52, 58); p.Dot(4, 7, bow); p.Dot(5, 7, Color.FromArgb(240, 90, 96)); p.Dot(6, 7, Color.FromArgb(240, 90, 96)); p.Dot(7, 7, bow); } // bow tie from level 7
@@ -484,6 +523,16 @@
     else if (act == "bye") { bool up = ((int)(t * 4)) % 2 == 0; p.Dot(-1, 6, shade); p.Dot(12, up ? 2 : 3, shade); p.Dot(up ? 13 : 12, up ? 1 : 2, shade); }
     else if (act == "point") { if (seeX < 0) { p.Dot(12, 6, shade); p.Dot(-1, 3, shade); p.Dot(-2, 2, shade); p.Dot(-3, 1, shade); } else { p.Dot(-1, 6, shade); p.Dot(12, 3, shade); p.Dot(13, 2, shade); p.Dot(14, 1, shade); } }
     else if (act == "groove") { bool up = ((int)(t * 2)) % 2 == 0; p.Dot(-1, up ? 2 : 4, shade); p.Dot(12, up ? 4 : 2, shade); }
+    else if (mood == "grumpy" && (now - grumpyAt).TotalSeconds >= .9 && (now - grumpyAt).TotalSeconds < 1.8) {
+     bool a = ((int)(t * 7)) % 2 == 0; p.Dot(-1, 5, shade); p.Dot(12, 5, shade);
+     p.Dot(a ? 3.5f : 4, 4.5f, shade); p.Dot(a ? 7.5f : 7, 4.5f, shade); // little fists rubbing the eyes
+    }
+    else if (act == "paw") {
+     bool ext = ((int)(t * 4)) % 2 == 0; float dr = pawRow * .9f;
+     if (pawSide > 0) { p.Dot(-1, 6, shade); p.Dot(12, 5 + dr, shade); p.Dot(13, 5 + dr * 1.6f, shade); if (ext) p.Dot(14, 5 + dr * 2.2f, shade); }
+     else { p.Dot(12, 6, shade); p.Dot(-1, 5 + dr, shade); p.Dot(-2, 5 + dr * 1.6f, shade); if (ext) p.Dot(-3, 5 + dr * 2.2f, shade); }
+    }
+    else if (act == "lick") { p.Dot(-1, 6, shade); p.Dot(11, 6.2f, shade); p.Dot(9.6f, 6.6f, shade); if (((int)(t * 5)) % 2 == 0) p.Dot(8.4f, 6.8f, Color.FromArgb(240, 130, 150)); }
     else if (act == "scratch") { bool a = ((int)(t * 8)) % 2 == 0; p.Dot(-1, 6, shade); p.Dot(12, 3, shade); p.Dot(11, a ? 1 : 0, shade); }
     else if (act == "reachUp" || (act == "yawn" && fe > .9 && fe < 1.9)) { p.Dot(-1, 1, shade); p.Dot(-1, 0, shade); p.Dot(12, 1, shade); p.Dot(12, 0, shade); }
     else if (act == "fish") { p.Dot(12, 6, shade); p.Dot(-1, 5, shade); p.Dot(-2, 4, shade); }
@@ -540,7 +589,7 @@
     else if (hat == "straw") { Color s = Color.FromArgb(226, 190, 110), band = Color.FromArgb(214, 52, 58); p.Row(-1, 0, 11, s); p.Row(-2, 3, 8, band); p.Row(-3, 4, 7, s); }
     else if (hat == "nightcap") { Color c = Color.FromArgb(70, 92, 170); p.Row(-1, 2, 9, Color.FromArgb(200, 210, 240)); p.Row(-2, 4, 9, c); p.Row(-3, 7, 10, c); p.Dot(11, -2, white); }
     else if (hat == "crown") { Color gold = Color.FromArgb(246, 200, 70), jewel = Color.FromArgb(220, 60, 90); p.Row(-1, 3, 8, gold); p.Dot(3, -2, gold); p.Dot(5.5f, -2, gold); p.Dot(8, -2, gold); p.Dot(5.5f, -1, jewel); }
-    else if (level >= 3 || shape == "robot") { double glow = (Math.Sin(t * 3) + 1) / 2; p.Dot(6, -1, shade); p.Dot(6, -2, shade); p.Dot(6, -3, Color.FromArgb(255, (int)(180 + 70 * glow), (int)(220 + 30 * glow), 120)); }
+    else if (level >= 3 || shape == "robot") { double glow = (Math.Sin(t * 3) + 1) / 2; p.Dot(6, -1, shade); p.Dot(6, -2, shade); p.Dot(6, -3, act == "beep" ? (((int)(t * 8)) % 2 == 0 ? Color.FromArgb(255, 90, 90) : Color.FromArgb(110, 230, 255)) : Color.FromArgb(255, (int)(180 + 70 * glow), (int)(220 + 30 * glow), 120)); }
     // Headphones while music plays.
     if (MusicOn && !lying) {
      Color cup = Color.FromArgb(54, 56, 64), pad = CreatureTint == accent ? Color.FromArgb(120, 210, 255) : accent;
@@ -610,6 +659,9 @@
     using (var b = new SolidBrush(Color.FromArgb(a, 246, 246, 250))) g.FillPolygon(b, wing);
     using (var fold = new Pen(Color.FromArgb(a, 160, 168, 182), Math.Max(1f, px * .3f))) g.DrawLine(fold, sx + 3 * px, sy, sx - .8f * px, sy + .2f * px);
    }
+   // The robot's "bip".
+   if (act == "beep" && ((int)((now - fidgetAt).TotalSeconds * 2.5)) % 2 == 0)
+    using (var font = new Font("Segoe UI Semibold", 5.5f * stage.Zoom)) using (var b = new SolidBrush(Color.FromArgb(220, 120, 232, 255))) g.DrawString("bip", font, b, ox + 7.5f * px, oy - 3.5f * px);
    // A whistled note.
    if (act == "whistle") {
     double pn = (fe % 1.2) / 1.2;
