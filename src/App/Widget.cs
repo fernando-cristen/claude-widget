@@ -16,7 +16,7 @@ using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
+
 using System.Windows.Forms;
 
 namespace MeuClaudeWidget {
@@ -47,8 +47,11 @@ namespace MeuClaudeWidget {
   public bool Liquid = true, DayLine = true, Creature = true, NightMode = true, WindowsAccent = true;
   public bool WeatherFx = true, Family = true, Flame = true, Battery = true;
   public bool Events = true, XpSeeded;
-  public bool Desk = true, Walks = true, Speech = true, Music = true, Games = true, Colleagues = true, TrophiesSeeded; public int DeskX = Int32.MinValue, DeskY = Int32.MinValue;
-  public string CreatureName = "", CreatureShape = "round", CreatureColor = "", LastFinishedDay = "", PlantWatered = "";
+  public bool RadarOffered; // o convite para ativar o radar já apareceu
+  public bool Skia = true, Gpu3D = true, Voice = true, AutoUpdate = true; public string UpdateSkip = "";
+  public List<string> PinnedProjects = new List<string>(); // session center: projects pinned to the top
+  public bool DeskTall, Desk = true, Walks = true, Speech = true, Music = true, Games = true, Colleagues = true, TrophiesSeeded; public int DeskX = Int32.MinValue, DeskY = Int32.MinValue;
+  public string CreatureName = "", CreatureShape = "round", CreatureStyle = "pixel", CreatureColor = "", LastFinishedDay = "", PlantWatered = "";
   public int Fish, PlantDays;
   public List<string> Trophies = new List<string>();
   public int CreatureXp;
@@ -64,14 +67,20 @@ namespace MeuClaudeWidget {
   public RequestFailure(string message, int delay) : base(message) { Delay = delay; }
  }
  public static class Data {
-  public static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeuClaudeWidget");
+  public static readonly string Folder = Path.Combine(LocalAppData(), "MeuClaudeWidget");
+  static string LocalAppData() { string env = Environment.GetEnvironmentVariable("LOCALAPPDATA"); return String.IsNullOrWhiteSpace(env) ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) : env; }
   public static readonly string ConfigPath = Path.Combine(Folder, "config.json");
-  public static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength = 1048576 }; }
+  public static Json Json() { return new Json { MaxJsonLength = 1048576 }; }
   public static Dictionary<string, object> Map(object value) { return value as Dictionary<string, object>; }
   public static object Get(Dictionary<string, object> obj, string key) { object v; return obj != null && obj.TryGetValue(key, out v) ? v : null; }
   public static string Str(object value) { return value == null ? "" : Convert.ToString(value, CultureInfo.InvariantCulture); }
   public static Settings Load() {
-   try { var s = Json().Deserialize<Settings>(File.ReadAllText(ConfigPath)); if (s != null) { s.Interval = 60; return s; } } catch { }
+   for (int attempt = 0; attempt < 3; attempt++) {
+    try { if (!File.Exists(ConfigPath)) break; var s = Json().Deserialize<Settings>(File.ReadAllText(ConfigPath)); if (s != null) { s.Interval = 60; return s; } }
+    catch (IOException) { System.Threading.Thread.Sleep(300); continue; } // busy at boot (antivirus, sync): try again
+    catch { try { File.Copy(ConfigPath, ConfigPath + ".ilegivel", true); } catch { } } // keep it before the defaults overwrite it
+    break;
+   }
    return new Settings();
   }
   public static void Save(Settings s) {
@@ -263,7 +272,9 @@ namespace MeuClaudeWidget {
       Guid id;
       if (org.Text.Trim().Length > 0 && !Guid.TryParse(org.Text.Trim(), out id)) { MessageBox.Show(this,"O ID da organização deve ser um UUID, ou deixe em branco."); return; }
      }
-     Value = new Settings { Mode = mode.SelectedIndex == 0 ? "browser" : "code", ProtectedSession = mode.SelectedIndex == 0 ? session : "", Organization = org.Text.Trim(), Interval = 60, OnTop = top.Checked, X = current.X, Y = current.Y, Compact = current.Compact, CompactX = current.CompactX, CompactY = current.CompactY, RadarAlerts = current.RadarAlerts, UsageAlerts = current.UsageAlerts, SelectedSession = current.SelectedSession };
+     // Start from everything already chosen (walks, creature, pinned projects…) and change only what this window edits.
+     Value = Data.Json().Deserialize<Settings>(Data.Json().Serialize(current)) ?? new Settings();
+     Value.Mode = mode.SelectedIndex == 0 ? "browser" : "code"; Value.ProtectedSession = mode.SelectedIndex == 0 ? session : ""; Value.Organization = org.Text.Trim(); Value.Interval = 60; Value.OnTop = top.Checked;
      Data.Save(Value); key.Clear(); DialogResult = DialogResult.OK; Close();
     } catch { MessageBox.Show(this,"Não foi possível salvar a configuração com proteção do Windows."); }
    };
@@ -282,6 +293,7 @@ namespace MeuClaudeWidget {
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsIconic(IntPtr handle);
   [DllImport("user32.dll")] internal static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool DestroyIcon(IntPtr handle);
+  [DllImport("kernel32.dll")] internal static extern bool AttachConsole(int pid); // liga a saída ao terminal que chamou o .exe nos modos de teste
  }
  public partial class Widget : Form {
   Settings settings; readonly Api api = new Api(); readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -337,6 +349,7 @@ namespace MeuClaudeWidget {
   public Widget(bool preview) {
    this.preview = preview;
    settings = preview ? new Settings { Mode = "code" } : Data.Load();
+   SkiaLayer.Enabled = settings.Skia; Pet3D.GpuEnabled = settings.Gpu3D; Som.Voice = settings.Voice;
    if (!preview) history = Pace.Load();
    Text = "Meu Claude · Uso"; FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.Manual;
    AutoScaleMode = AutoScaleMode.None; BackColor = Color.FromArgb(27,29,32); ForeColor = ink; TopMost = settings.OnTop;
@@ -377,7 +390,7 @@ namespace MeuClaudeWidget {
    menu.Items.Add("Alinhar perto do relógio", null, delegate { if (!settings.Compact) ToggleCompact(); if (settings.DockTaskbar) dockItem.Checked = false; DockNearClock(); RememberPosition(); TrySave(); });
    menu.Items.Add("Atualizar", null, async delegate { await RefreshUsage(); });
    menu.Items.Add("Status da conexão", null, delegate { ShowStatusTip(); });
-   menu.Items.Add("Projetos e sessões…", null, delegate { ShowRadar(); });
+   menu.Items.Add("Sessões e histórico…", null, delegate { ShowRadar(); });
    menu.Items.Add("Ir para o terminal da sessão", null, delegate { if (activeSession != null) FocusSession(activeSession.Id); else ShowRadar(); });
    var notifyItem = new ToolStripMenuItem("Avisar quando precisar de você / terminar") { Checked = settings.RadarAlerts, CheckOnClick = true };
    notifyItem.CheckedChanged += delegate { settings.RadarAlerts = notifyItem.Checked; TrySave(); };
@@ -388,6 +401,9 @@ namespace MeuClaudeWidget {
    var soundItem = new ToolStripMenuItem("Sons ao terminar / precisar de você") { Checked = settings.Sounds, CheckOnClick = true };
    soundItem.CheckedChanged += delegate { settings.Sounds = soundItem.Checked; TrySave(); if (soundItem.Checked) Chime.Play(false); };
    menu.Items.Add(soundItem);
+   var voiceItem = new ToolStripMenuItem("Barulhinhos do bichinho") { Checked = settings.Voice, CheckOnClick = true };
+   voiceItem.CheckedChanged += delegate { settings.Voice = Som.Voice = voiceItem.Checked; TrySave(); if (voiceItem.Checked) Som.Chirp("giggle"); };
+   menu.Items.Add(voiceItem);
    var animItem = new ToolStripMenuItem("Animações na faixa") { Checked = settings.Animations, CheckOnClick = true };
    animItem.CheckedChanged += delegate { settings.Animations = animItem.Checked; FinishStripMotion(); TrySave(); UpdateAmbient(); Invalidate(); };
    menu.Items.Add(animItem);
@@ -413,6 +429,8 @@ namespace MeuClaudeWidget {
    look("Chama da sequência sem rejeição", () => settings.Flame, v => settings.Flame = v);
    look("Bateria do contexto", () => settings.Battery, v => settings.Battery = v);
    look("Acontecimentos (passarinho, borboleta…)", () => settings.Events, v => settings.Events = v);
+   look("Desenho da faixa com Skia (mais suave)", () => settings.Skia, v => { settings.Skia = v; SkiaLayer.Enabled = v; });
+   look("Bichinho 3D na placa de vídeo", () => settings.Gpu3D, v => { settings.Gpu3D = v; Pet3D.GpuEnabled = v; Pet3D.Generation++; });
    // Try any animation right now, without waiting for it to happen.
    var test = new ToolStripMenuItem("Testar");
    foreach (var kind in new[] { new KeyValuePair<string,string>("random", "Acontecimento aleatório"), new KeyValuePair<string,string>("bird", "Passarinho"), new KeyValuePair<string,string>("butterfly", "Borboleta"),
@@ -421,7 +439,6 @@ namespace MeuClaudeWidget {
     string k = kind.Key; test.DropDownItems.Add(kind.Value, null, delegate { StartHappening(k); });
    }
    test.DropDownItems.Add(new ToolStripSeparator());
-   test.DropDownItems.Add("Subir de nível", null, delegate { levelUpAt = DateTime.Now; StartMotionTimer(); });
    test.DropDownItems.Add("Erro num comando (raio)", null, delegate { failAt = DateTime.Now; StartMotionTimer(); });
    test.DropDownItems.Add("Sessão terminou (família comemora)", null, delegate { cheerAt = DateTime.Now; StartMotionTimer(); });
    test.DropDownItems.Add("Limite renovado (redemoinho)", null, delegate { TestDrain(); });
@@ -436,6 +453,12 @@ namespace MeuClaudeWidget {
    // The creature's own look: name, shape and color.
    var custom = new ToolStripMenuItem("Personalizar bichinho");
    custom.DropDownItems.Add("Nome…", null, delegate { string n = AskName(settings.CreatureName ?? ""); if (n != null) { settings.CreatureName = n; TrySave(); WriteCreatureFile(true); Invalidate(); } });
+   var styles = new ToolStripMenuItem("Estilo"); custom.DropDownItems.Add(styles);
+   foreach (var st in new[] { new[] { "pixel", "Pixel art" }, new[] { "3d", "3D" } }) {
+    string key = st[0]; var item = new ToolStripMenuItem(st[1]) { Checked = (settings.CreatureStyle ?? "pixel") == key };
+    item.Click += delegate { settings.CreatureStyle = key; foreach (ToolStripItem o in styles.DropDownItems) { var m = o as ToolStripMenuItem; if (m != null) m.Checked = m == item; } TrySave(); Invalidate(); };
+    styles.DropDownItems.Add(item);
+   }
    var shapes = new ToolStripMenuItem("Formato"); custom.DropDownItems.Add(shapes);
    foreach (var s in Shapes) {
     string key = s[0]; var item = new ToolStripMenuItem(s[1]) { Checked = Shape == key };
@@ -451,6 +474,7 @@ namespace MeuClaudeWidget {
    looks.DropDownItems.Add(new ToolStripSeparator());
    looks.DropDownItems.Add(custom);
    looks.DropDownItems.Add(test);
+   menu.Items.Add("Conversar com o bichinho…", null, delegate { OpenChat(); });
    menu.Items.Add(looks);
    var redmineMenu = new ToolStripMenuItem("Redmine");
    var redmineAuto = new ToolStripMenuItem("Apontar horas às 17:55 (tarefa em andamento)") { Checked = settings.RedmineAuto, CheckOnClick = true };
@@ -477,12 +501,25 @@ namespace MeuClaudeWidget {
     hint.Show("Hoje não será feito apontamento automático no Redmine.", this, new Point(Px(12), Px(4)), 5000);
    });
    menu.Items.Add(redmineMenu);
+   var radarMenu = new ToolStripMenuItem("Radar do Claude Code");
+   radarMenu.DropDownItems.Add("Ativar ou atualizar o radar…", null, delegate { RunRadarSetup(false); });
+   radarMenu.DropDownItems.Add("Remover o radar…", null, delegate {
+    if (MessageBox.Show(this, "Remover os hooks do radar e a barra de status do widget do Claude Code?\nOs demais hooks e configurações são preservados, com backup.", "Radar do Claude Code", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) RunRadarSetup(true);
+   });
+   menu.Items.Add(radarMenu);
    var startupItem = new ToolStripMenuItem("Iniciar com o Windows") { Checked = Program.StartsWithWindows(), Enabled = Program.AppFolder.Length > 0 };
    startupItem.Click += delegate {
     try { Program.SetStartup(!startupItem.Checked); } catch { MessageBox.Show(this,"Não foi possível alterar a inicialização automática."); }
     startupItem.Checked = Program.StartsWithWindows();
    };
    menu.Items.Add(startupItem);
+   var updateMenu = new ToolStripMenuItem("Atualizações");
+   updateMenu.DropDownItems.Add("Procurar atualização agora…", null, async delegate { await CheckUpdates(true); });
+   var autoUpdateItem = new ToolStripMenuItem("Procurar automaticamente (GitHub)") { Checked = settings.AutoUpdate, CheckOnClick = true };
+   autoUpdateItem.CheckedChanged += delegate { settings.AutoUpdate = autoUpdateItem.Checked; TrySave(); };
+   updateMenu.DropDownItems.Add(autoUpdateItem);
+   updateMenu.DropDownItems.Add("Versão " + Updater.Current + " · página de versões", null, delegate { OpenUrl(Updater.ReleasesPage); });
+   menu.Items.Add(updateMenu);
    menu.Items.Add(new ToolStripSeparator());
    menu.Items.Add("Configurar", null, delegate { Show(); Configure(); });
    menu.Items.Add("Ver uso no Claude", null, delegate { Program.OpenUsage(); });
@@ -501,6 +538,7 @@ namespace MeuClaudeWidget {
    MouseDoubleClick += delegate(object sender, MouseEventArgs e) {
     if (e.Button != MouseButtons.Left) return;
     if (HitLayout.Usage.Contains(e.Location)) ToggleCompact();
+    else if (settings.Compact && settings.Creature && !strip.Creature.IsEmpty && strip.Creature.Contains(e.Location)) OpenChat();
    };
    MouseEnter += delegate { hovering = true; Invalidate(); };
    MouseLeave += delegate { hovering = false; Invalidate(); };
@@ -537,8 +575,22 @@ namespace MeuClaudeWidget {
     Arrange(); RestorePosition(); PinCompact(); RefreshRadar();
     foregroundHook = Taskbar.WatchForeground(OnForeground);
     timer.Start(); if (settings.Mode.Length == 0) Configure(); else await RefreshUsage();
+    OfferRadar(); InitUpdates();
+    if (settings.Creature) Task.Run(() => Pet3D.Warm());
    };
    FormClosing += delegate { stopped = true; timer.Stop(); DisposeStyle(); FinishStripMotion(); DisposeStripMotion(); if (foregroundHook != IntPtr.Zero) Taskbar.UnhookWinEvent(foregroundHook); RememberPosition(); TrySave(); tray.Visible = false; tray.Dispose(); if (trayHandle != IntPtr.Zero) Native.DestroyIcon(trayHandle); api.Dispose(); timer.Dispose(); anim.Stop(); anim.Dispose(); ambientTimer.Stop(); ambientTimer.Dispose(); menu.Dispose(); hint.Dispose(); };
+  }
+  // Na primeira abertura, convida a ligar o radar; quem já tinha a versão 3.x não vê o convite.
+  void OfferRadar() {
+   if (preview || settings.RadarOffered) return;
+   settings.RadarOffered = true; TrySave();
+   if (RadarSetup.Installed()) return;
+   var answer = MessageBox.Show(this, "Ativar o radar do Claude Code?\n\nO widget passa a mostrar o estado das sessões, o projeto, o Git, o modelo, o contexto e o custo. Para isso, hooks locais são adicionados ao settings.json do Claude Code, com backup e sem mudar permissões.\n\nDá para ligar ou desligar depois no menu, em \"Radar do Claude Code\".", "Meu Claude", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+   if (answer == DialogResult.Yes) RunRadarSetup(false);
+  }
+  void RunRadarSetup(bool remove) {
+   try { string message = remove ? RadarSetup.Remove() : RadarSetup.Install(); MessageBox.Show(this, message, remove ? "Radar removido" : "Radar ativado"); }
+   catch (Exception error) { MessageBox.Show(this, "Falha: " + error.Message, "Radar do Claude Code", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
   }
   void Balloon(string caption, string text, string session) { balloonSession = session; balloonAction = null; tray.ShowBalloonTip(5000, caption, text, ToolTipIcon.Info); }
   static void OpenUrl(string url) {
@@ -915,10 +967,15 @@ namespace MeuClaudeWidget {
    string others = OthersSummary(); if (others.Length > 0) others += "\n";
    return RadarTitle()+"\nSessão: "+activeSession.Id.Substring(0,8)+" · "+sessions.Count+" sessão(ões) nas últimas 24h\nÚltimo evento: "+activeSession.Event+" "+activeSession.Tool+" às "+activeSession.Time.ToLocalTime().ToString("dd/MM HH:mm:ss")+"\n"+usage+closed+others+gitInfo.Details+"\nEstado observado por eventos e pelo processo do Claude Code.";
   }
+  // The session center: one window, reused while open.
+  CentralForm central;
   void ShowRadar() {
-   using (var form = new RadarForm(()=>new List<SessionInfo>(sessions),()=>RadarDetails(),id=>{
+   if (central != null && !central.IsDisposed) { if (central.WindowState == FormWindowState.Minimized) central.WindowState = FormWindowState.Normal; central.Activate(); return; }
+   central = new CentralForm(()=>new List<SessionInfo>(sessions), FocusSession, id=>{
     settings.SelectedSession=id; SelectSession(); UpdateAmbient(); nextGit=DateTimeOffset.MinValue; TrySave(); UpdateLabels(); Invalidate(); RefreshGit();
-   },FocusSession,SessionTask)) form.ShowDialog(this);
+   }, OpenUrl, settings, TrySave);
+   central.FormClosed += delegate { central = null; };
+   central.Show();
   }
   void SelectSession() {
    SessionInfo selected = sessions.Find(s=>s.Id==settings.SelectedSession);
@@ -1397,9 +1454,40 @@ namespace MeuClaudeWidget {
  }
  public static class Program {
   public static string AppFolder = "";
+  public static string ExePath { get { try { return Environment.ProcessPath ?? ""; } catch { return ""; } } }
+  // Entrada do .exe. Sem argumentos abre o widget; os demais modos servem aos scripts de teste.
+  [STAThread] public static int Main(string[] args) {
+   string folder = ""; try { folder = Path.GetDirectoryName(ExePath) ?? AppContext.BaseDirectory; } catch { }
+   string mode = args.Length > 0 ? args[0].ToLowerInvariant() : "";
+   if (mode == "--selftest" || mode == "--testar" || mode == "--testar-transicoes" || mode == "--preview" || mode == "--ativar-radar" || mode == "--remover-radar" || mode == "--testar-3d" || mode == "--folha-bichinho" || mode == "--capturar-telas") {
+    Native.AttachConsole(-1); try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+    try {
+     Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+     string result;
+     if (mode == "--preview") { string target = args.Length > 1 ? args[1] : Path.Combine(folder, "preview"); Directory.CreateDirectory(target); Preview(target); result = "Imagens gravadas em " + target; }
+     else if (mode == "--testar-transicoes") { string render = args.Length > 1 ? args[1] : ""; if (render.Length > 0) Directory.CreateDirectory(render); result = SelfTest() + Environment.NewLine + Widget.TestTransitions(render); }
+     else if (mode == "--ativar-radar") result = RadarSetup.Install();
+     else if (mode == "--capturar-telas") { string target = args.Length > 1 ? args[1] : Path.Combine(folder, "preview"); Directory.CreateDirectory(target); result = CapturaTelas.Run(target); }
+     else if (mode == "--folha-bichinho") { string target = args.Length > 1 ? args[1] : Path.Combine(folder, "preview"); Directory.CreateDirectory(target); result = Widget.FolhaBichinho(target); }
+     else if (mode == "--testar-3d") { string target = args.Length > 1 ? args[1] : Path.Combine(folder, "preview"); Directory.CreateDirectory(target); result = Test3D(target); }
+     else if (mode == "--remover-radar") result = RadarSetup.Remove();
+     else result = SelfTest();
+     Console.WriteLine(result);
+     if (mode == "--selftest") MessageBox.Show(result, "Teste do widget");
+     return 0;
+    } catch (Exception error) {
+     Console.Error.WriteLine("FALHA: " + error.Message);
+     if (mode == "--selftest") MessageBox.Show(error.Message, "Teste do widget - falha");
+     return 1;
+    }
+   }
+   Run(folder);
+   return 0;
+  }
   public static void OpenUsage() { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://claude.ai/settings/usage") { UseShellExecute = true }); } catch { MessageBox.Show("Abra https://claude.ai/settings/usage no navegador."); } }
   public static void Run(string folder) {
    AppFolder = folder ?? "";
+   try { if (StartsWithWindows()) SetStartup(true); } catch { }
    bool first; using (var mutex = new System.Threading.Mutex(true,"Local\\MeuClaudeWidget-v1",out first)) {
     if (!first) { MessageBox.Show("O widget já está aberto. Procure o ícone perto do relógio."); return; }
     Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new Widget());
@@ -1407,18 +1495,18 @@ namespace MeuClaudeWidget {
   }
   static string StartupLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Meu Claude Widget.lnk"); } }
   public static bool StartsWithWindows() { return File.Exists(StartupLink); }
-  // The shortcut starts PowerShell hidden directly, avoiding the console flash of the .cmd launcher.
+  // The shortcut starts the .exe directly.
   public static void SetStartup(bool enabled) {
    if (!enabled) { if (File.Exists(StartupLink)) File.Delete(StartupLink); return; }
-   string shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+   string exe = ExePath; if (exe.Length == 0) throw new InvalidOperationException("Caminho do aplicativo desconhecido.");
    Type type = Type.GetTypeFromProgID("WScript.Shell"); object host = Activator.CreateInstance(type);
    try {
     object link = type.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, host, new object[] { StartupLink });
     try {
      Type kind = link.GetType();
-     SetMember(kind, link, "TargetPath", shell);
-     SetMember(kind, link, "Arguments", "-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + Path.Combine(AppFolder, "Iniciar.ps1") + "\"");
-     SetMember(kind, link, "WorkingDirectory", AppFolder);
+     SetMember(kind, link, "TargetPath", exe);
+     SetMember(kind, link, "Arguments", "");
+     SetMember(kind, link, "WorkingDirectory", Path.GetDirectoryName(exe) ?? AppFolder);
      SetMember(kind, link, "WindowStyle", 7);
      SetMember(kind, link, "Description", "Meu Claude · widget de uso");
      kind.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
@@ -1438,6 +1526,31 @@ namespace MeuClaudeWidget {
      return done;
     }
    } catch { return false; }
+  }
+  // Renders the 3D creature with the GPU and with the CPU side by side, and plays the sounds through the mixer.
+  public static string Test3D(string folder) {
+   var lines = new List<string>();
+   var poses = new[] { new Pose3D { Mouth = "cat" }, new Pose3D { HappyEyes = true, Mouth = "open", ArmL = 2.5f, ArmR = .8f, Lift = .2f }, new Pose3D { EyesClosed = true, Mouth = "flat", Squash = .93f, Body = Color.FromArgb(120, 180, 230) } };
+   foreach (int size in new[] { 40, 120 }) {
+    using (var sheet = new Bitmap(size * poses.Length, size * 2)) {
+     using (var g = Graphics.FromImage(sheet)) {
+      g.Clear(Color.FromArgb(27, 29, 32));
+      for (int i = 0; i < poses.Length; i++) {
+       Pet3D.GpuEnabled = true; var t0 = System.Diagnostics.Stopwatch.StartNew(); using (var gpu = Pet3D.Render(poses[i], size)) { t0.Stop(); g.DrawImageUnscaled(gpu, i * size, 0); }
+       bool viaGpu = Pet3D.GpuActive;
+       Pet3D.GpuEnabled = false; var t1 = System.Diagnostics.Stopwatch.StartNew(); using (var cpu = Pet3D.Render(poses[i], size)) { t1.Stop(); g.DrawImageUnscaled(cpu, i * size, size); }
+       Pet3D.GpuEnabled = true;
+       lines.Add("tamanho " + size + " pose " + i + ": GPU " + (viaGpu ? t0.Elapsed.TotalMilliseconds.ToString("0.00") + " ms" : "indisponível") + " · CPU " + t1.Elapsed.TotalMilliseconds.ToString("0.00") + " ms");
+      }
+     }
+     sheet.Save(Path.Combine(folder, "bicho3d-" + size + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+    }
+   }
+   Som.Voice = true; Som.Chirp("giggle"); Chime.Play(false); System.Threading.Thread.Sleep(300); Som.Chirp("catch"); System.Threading.Thread.Sleep(1500);
+   lines.Add("som: " + (Som.Ready ? "mixer ativo" : "indisponível"));
+   lines.Add("skia: " + (SkiaLayer.Available ? "disponível" : "indisponível"));
+   lines.Add("imagens em " + folder);
+   return String.Join(Environment.NewLine, lines);
   }
   public static void Preview(string folder) {
    foreach (bool compact in new bool[] { true, false })

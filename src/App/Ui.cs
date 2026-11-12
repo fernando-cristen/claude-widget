@@ -9,9 +9,9 @@ namespace MeuClaudeWidget {
 
  // Small owner-drawn UI kit: Windows 11 look (dark title bar, rounded cards, Fluent icons, Segoe UI Variable).
  public static class Theme {
-  public static Color Bg = Color.FromArgb(16,17,20), Surface = Color.FromArgb(25,27,31), Raised = Color.FromArgb(33,36,41), Hover = Color.FromArgb(37,40,46),
-   Line = Color.FromArgb(43,46,53), Ink = Color.FromArgb(242,239,234), Soft = Color.FromArgb(186,188,194), Muted = Color.FromArgb(126,130,139),
-   Accent = Color.FromArgb(217,150,114), Green = Color.FromArgb(98,196,140), Amber = Color.FromArgb(238,182,82), Red = Color.FromArgb(242,116,106), Blue = Color.FromArgb(108,166,242);
+  public static Color Bg = Color.FromArgb(18,18,20), Surface = Color.FromArgb(25,25,28), Raised = Color.FromArgb(34,34,38), Hover = Color.FromArgb(30,30,34),
+   Line = Color.FromArgb(40,40,45), Ink = Color.FromArgb(237,237,240), Soft = Color.FromArgb(163,163,172), Muted = Color.FromArgb(113,113,122),
+   Accent = Color.FromArgb(217,119,87), Green = Color.FromArgb(94,190,130), Amber = Color.FromArgb(226,170,84), Red = Color.FromArgb(232,104,96), Blue = Color.FromArgb(112,158,232);
   static HashSet<string> installed;
   static string Pick(params string[] names) {
    if (installed == null) installed = new HashSet<string>(FontFamily.Families.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
@@ -91,16 +91,16 @@ namespace MeuClaudeWidget {
   public static void Glyph(Graphics g, string glyph, float size, Rectangle r, Color c) {
    TextRenderer.DrawText(g, glyph, Theme.F(Theme.Icons, size), r, c, Base | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
   }
-  public static Size ChipSize(Graphics g, Ui ui, string text) { return new Size(Width(g, text, Theme.F(Theme.SansBold, 8)) + ui.P(16), ui.P(20)); }
+  public static Size ChipSize(Graphics g, Ui ui, string text) { return new Size(Width(g, text, Theme.F(Theme.Sans, 8)) + ui.P(12), ui.P(18)); }
   public static void Chip(Graphics g, Ui ui, string text, Color color, Rectangle r) {
-   Fill(g, r, r.Height / 2, Theme.A(color, 34));
-   TextRenderer.DrawText(g, text, Theme.F(Theme.SansBold, 8), r, color, Base | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+   Fill(g, r, ui.P(4), Theme.A(color, 22));
+   TextRenderer.DrawText(g, text, Theme.F(Theme.Sans, 8), r, color, Base | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
   }
  }
 
  // Element tree laid out top to bottom; Bounds are in content coordinates (before scrolling).
  public abstract class El {
-  public Rectangle Bounds; public Action Click, DoubleClick; public string Tip; public int Before = 12, Inset;
+  public Rectangle Bounds; public Action Click, DoubleClick; public Action<Point> Menu; public string Tip; public int Before = 12, Inset;
   public virtual IEnumerable<El> Children { get { return Enumerable.Empty<El>(); } }
   public abstract int Layout(Graphics g, Ui ui, int x, int y, int width);
   public abstract void Paint(Graphics g, Ui ui, El hover);
@@ -111,27 +111,26 @@ namespace MeuClaudeWidget {
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(height)); return Bounds.Height; }
   public override void Paint(Graphics g, Ui ui, El hover) { }
  }
+ // Page title: one line of display type and a quiet subtitle. No icon tile.
  public sealed class TitleEl : El {
-  public string Glyph = Theme.Info, Title = "", Subtitle = ""; public Color Color = Theme.Accent;
+  public string Glyph = "", Title = "", Subtitle = ""; public Color Color = Theme.Accent;
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) {
-   int text = width - ui.P(60);
-   int h = Draw.Measure(g, Title, Theme.F(Theme.Display, 17), text) + ui.P(2) + Draw.Measure(g, Subtitle, Theme.F(Theme.Sans, 9.5f), text);
-   Bounds = new Rectangle(x, y, width, Math.Max(ui.P(46), h)); return Bounds.Height;
+   int h = Draw.Measure(g, Title, Theme.F(Theme.Display, 15), width) + (Subtitle.Length > 0 ? ui.P(4) + Draw.Measure(g, Subtitle, Theme.F(Theme.Sans, 9.5f), width) : 0);
+   Bounds = new Rectangle(x, y, width, h); return Bounds.Height;
   }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   var tile = new Rectangle(Bounds.X, Bounds.Y, ui.P(46), ui.P(46));
-   Draw.Fill(g, tile, ui.P(13), Theme.A(Color, 40)); Draw.Glyph(g, Glyph, 16, tile, Color);
-   int x = Bounds.X + ui.P(60), w = Bounds.Width - ui.P(60), th = Draw.Measure(g, Title, Theme.F(Theme.Display, 17), w);
-   Draw.Text(g, Title, Theme.F(Theme.Display, 17), new Rectangle(x, Bounds.Y - ui.P(2), w, th), Theme.Ink);
-   Draw.Text(g, Subtitle, Theme.F(Theme.Sans, 9.5f), new Rectangle(x, Bounds.Y + th, w, Bounds.Height), Theme.Soft);
+   int th = Draw.Measure(g, Title, Theme.F(Theme.Display, 15), Bounds.Width);
+   Draw.Text(g, Title, Theme.F(Theme.Display, 15), new Rectangle(Bounds.X, Bounds.Y, Bounds.Width, th), Theme.Ink);
+   if (Subtitle.Length > 0) Draw.Text(g, Subtitle, Theme.F(Theme.Sans, 9.5f), new Rectangle(Bounds.X, Bounds.Y + th + ui.P(4), Bounds.Width, Bounds.Height), Theme.Muted);
   }
  }
+ // Section heading in sentence case; an optional note on the right.
  public sealed class SectionEl : El {
   public string Text = "", Right = "";
-  public SectionEl() { Before = 22; }
-  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x + ui.P(4), y, width - ui.P(8), ui.P(18)); return Bounds.Height; }
+  public SectionEl() { Before = 28; }
+  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(20)); return Bounds.Height; }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   Draw.Line(g, Text.ToUpperInvariant(), Theme.F(Theme.SansBold, 8), Bounds, Theme.Muted);
+   Draw.Line(g, Text, Theme.F(Theme.SansBold, 9.5f), Bounds, Theme.Ink);
    if (Right.Length > 0) Draw.Line(g, Right, Theme.F(Theme.Sans, 8.5f), Bounds, Theme.Muted, true);
   }
  }
@@ -142,57 +141,54 @@ namespace MeuClaudeWidget {
   }
   public override void Paint(Graphics g, Ui ui, El hover) { Draw.Text(g, Text, Font, Bounds, Color); }
  }
- // A labelled excerpt with an accent bar ("Você pediu", "Claude").
+ // A labelled excerpt ("Você pediu", "Claude") with a thin neutral rule.
  public sealed class QuoteEl : El {
   public string Label = "", Text = ""; public Color Color = Theme.Accent, TextColor = Theme.Ink;
-  public QuoteEl() { Before = 10; }
+  public QuoteEl() { Before = 12; }
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) {
-   Bounds = new Rectangle(x, y, width, ui.P(18) + Draw.Measure(g, Text, Theme.F(Theme.Sans, 9.5f), width - ui.P(14))); return Bounds.Height;
+   Bounds = new Rectangle(x, y, width, ui.P(20) + Draw.Measure(g, Text, Theme.F(Theme.Sans, 9.5f), width - ui.P(14))); return Bounds.Height;
   }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   Draw.Fill(g, new Rectangle(Bounds.X, Bounds.Y + ui.P(2), ui.P(3), Bounds.Height - ui.P(2)), ui.P(2), Theme.A(Color, 150));
-   Draw.Line(g, Label.ToUpperInvariant(), Theme.F(Theme.SansBold, 7.5f), new Rectangle(Bounds.X + ui.P(14), Bounds.Y, Bounds.Width, ui.P(16)), Color);
-   Draw.Text(g, Text, Theme.F(Theme.Sans, 9.5f), new Rectangle(Bounds.X + ui.P(14), Bounds.Y + ui.P(18), Bounds.Width - ui.P(14), Bounds.Height), TextColor);
+   using (var b = new SolidBrush(Theme.Line)) g.FillRectangle(b, Bounds.X, Bounds.Y + ui.P(2), Math.Max(1, ui.P(2)), Bounds.Height - ui.P(2));
+   Draw.Line(g, Label, Theme.F(Theme.Sans, 8.5f), new Rectangle(Bounds.X + ui.P(14), Bounds.Y, Bounds.Width, ui.P(16)), Theme.Muted);
+   Draw.Text(g, Text, Theme.F(Theme.Sans, 9.5f), new Rectangle(Bounds.X + ui.P(14), Bounds.Y + ui.P(20), Bounds.Width - ui.P(14), Bounds.Height), TextColor);
   }
  }
- // List row: icon in a tinted circle, title, wrapped subtitle, mono meta line, chip and right-side text.
+ // List row: a small state mark, title, wrapped subtitle, mono meta line, a tag and right-side text.
  public sealed class RowEl : El {
   public string Glyph = "", Title = "", Subtitle = "", Meta = "", Chip = "", Right = "";
   public Color GlyphColor = Theme.Accent, ChipColor = Theme.Soft, RightColor = Theme.Muted, TitleColor = Theme.Ink; public bool Selected;
-  public RowEl() { Before = 2; }
+  public RowEl() { Before = 0; }
   int RightWidth(Graphics g, Ui ui) {
    int w = 0;
    if (Chip.Length > 0) w = Draw.ChipSize(g, ui, Chip).Width;
    if (Right.Length > 0) w = Math.Max(w, Draw.Width(g, Right, Theme.F(Theme.Sans, 8.5f)));
    return w == 0 ? 0 : w + ui.P(12);
   }
-  int TextX(Ui ui) { return Glyph.Length > 0 ? ui.P(54) : ui.P(14); }
+  int TextX(Ui ui) { return Glyph.Length > 0 ? ui.P(40) : ui.P(14); }
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) {
-   int text = width - TextX(ui) - RightWidth(g, ui) - ui.P(12);
+   int text = width - TextX(ui) - RightWidth(g, ui) - ui.P(14);
    int h = ui.P(20) + (Subtitle.Length > 0 ? ui.P(2) + Draw.Measure(g, Subtitle, Theme.F(Theme.Sans, 9), text) : 0) + (Meta.Length > 0 ? ui.P(4) + ui.P(16) : 0);
-   Bounds = new Rectangle(x, y, width, Math.Max(ui.P(36), h) + ui.P(20)); return Bounds.Height;
+   Bounds = new Rectangle(x, y, width, h + ui.P(22)); return Bounds.Height;
   }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   if (Selected) { Draw.Fill(g, Bounds, ui.P(10), Theme.A(Theme.Accent, 30)); Draw.Fill(g, new Rectangle(Bounds.X + ui.P(3), Bounds.Y + ui.P(12), ui.P(3), Bounds.Height - ui.P(24)), ui.P(2), Theme.Accent); }
-   else if (Hot(hover)) Draw.Fill(g, Bounds, ui.P(10), Theme.Hover);
-   int top = Bounds.Y + ui.P(10);
-   if (Glyph.Length > 0) {
-    var circle = new Rectangle(Bounds.X + ui.P(12), top, ui.P(32), ui.P(32));
-    Draw.Fill(g, circle, ui.P(16), Theme.A(GlyphColor, 36)); Draw.Glyph(g, Glyph, 11, circle, GlyphColor);
-   }
-   int x = Bounds.X + TextX(ui), right = RightWidth(g, ui), w = Bounds.Width - TextX(ui) - right - ui.P(12);
-   Draw.Line(g, Title, Theme.F(Theme.SansBold, 10), new Rectangle(x, top, w, ui.P(20)), TitleColor);
+   if (Selected) Draw.Fill(g, Bounds, ui.P(6), Theme.Raised);
+   else if (Hot(hover)) Draw.Fill(g, Bounds, ui.P(6), Theme.Hover);
+   int top = Bounds.Y + ui.P(11);
+   if (Glyph.Length > 0) Draw.Glyph(g, Glyph, 9.5f, new Rectangle(Bounds.X + ui.P(12), top, ui.P(18), ui.P(20)), GlyphColor);
+   int x = Bounds.X + TextX(ui), right = RightWidth(g, ui), w = Bounds.Width - TextX(ui) - right - ui.P(14);
+   Draw.Line(g, Title, Theme.F(Theme.SansBold, 9.5f), new Rectangle(x, top, w, ui.P(20)), TitleColor);
    int y = top + ui.P(22);
    if (Subtitle.Length > 0) { int h = Draw.Measure(g, Subtitle, Theme.F(Theme.Sans, 9), w); Draw.Text(g, Subtitle, Theme.F(Theme.Sans, 9), new Rectangle(x, y, w, h), Theme.Soft); y += h + ui.P(4); }
    if (Meta.Length > 0) Draw.Line(g, Meta, Theme.F(Theme.Mono, 8), new Rectangle(x, y, w, ui.P(16)), Theme.Muted);
-   int edge = Bounds.Right - ui.P(12), ry = top;
+   int edge = Bounds.Right - ui.P(14), ry = top;
    if (Chip.Length > 0) { var size = Draw.ChipSize(g, ui, Chip); Draw.Chip(g, ui, Chip, ChipColor, new Rectangle(edge - size.Width, ry, size.Width, size.Height)); ry += size.Height + ui.P(4); }
    if (Right.Length > 0) Draw.Line(g, Right, Theme.F(Theme.Sans, 8.5f), new Rectangle(edge - right, ry, right, ui.P(18)), RightColor, true);
   }
  }
- // Rounded surface holding other elements; optional hairlines between rows.
+ // A soft surface (no border) holding other elements; hairlines between rows.
  public sealed class CardEl : El {
-  public readonly List<El> Items = new List<El>(); public int Pad = 6; public bool Dividers = true; public Color Tint = Color.Empty;
+  public readonly List<El> Items = new List<El>(); public int Pad = 4; public bool Dividers = true; public Color Tint = Color.Empty;
   public override IEnumerable<El> Children { get { return Items; } }
   public CardEl Add(El e) { Items.Add(e); return this; }
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) {
@@ -204,61 +200,60 @@ namespace MeuClaudeWidget {
    Bounds = new Rectangle(x, y, width, cy - y + pad); return Bounds.Height;
   }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   Draw.Fill(g, Bounds, ui.P(14), Tint.IsEmpty ? Theme.Surface : Theme.Mix(Theme.Surface, Tint, .1f));
-   Draw.Stroke(g, Bounds, ui.P(14), Tint.IsEmpty ? Theme.Line : Theme.A(Tint, 90));
+   Draw.Fill(g, Bounds, ui.P(8), Theme.Surface);
+   if (!Tint.IsEmpty) Draw.Fill(g, new Rectangle(Bounds.X, Bounds.Y + ui.P(10), Math.Max(2, ui.P(2)), Bounds.Height - ui.P(20)), 1, Tint);
    for (int i = 0; i < Items.Count; i++) {
     if (Dividers && i > 0 && Items[i] is RowEl && Items[i - 1] is RowEl && hover != Items[i] && hover != Items[i - 1] && !((RowEl)Items[i]).Selected && !((RowEl)Items[i - 1]).Selected)
-     using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, Items[i].Bounds.X + ui.P(54), Items[i].Bounds.Y - ui.P(1), Items[i].Bounds.Right - ui.P(12), Items[i].Bounds.Y - ui.P(1));
+     using (var pen = new Pen(Theme.Line)) { int left = Items[i].Bounds.X + (((RowEl)Items[i]).Glyph.Length > 0 ? ui.P(40) : ui.P(14)); g.DrawLine(pen, left, Items[i].Bounds.Y, Items[i].Bounds.Right - ui.P(14), Items[i].Bounds.Y); }
     Items[i].Paint(g, ui, hover);
    }
   }
  }
  public class Tile { public string Glyph = "", Value = "", Label = ""; public Color Color = Theme.Accent; }
+ // Key numbers in a row, separated by hairlines: big value, quiet label.
  public sealed class StatsEl : El {
   public readonly List<Tile> Tiles = new List<Tile>(); public int Columns = 4;
   public override int Layout(Graphics g, Ui ui, int x, int y, int width) {
-   int rows = (Tiles.Count + Columns - 1) / Columns; Bounds = new Rectangle(x, y, width, rows * ui.P(104) - ui.P(10)); return Bounds.Height;
+   int rows = (Tiles.Count + Columns - 1) / Columns; Bounds = new Rectangle(x, y, width, rows * ui.P(64)); return Bounds.Height;
   }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   int gap = ui.P(10), w = (Bounds.Width - gap * (Columns - 1)) / Columns;
+   int w = Bounds.Width / Columns;
    for (int i = 0; i < Tiles.Count; i++) {
-    var t = Tiles[i]; var r = new Rectangle(Bounds.X + (i % Columns) * (w + gap), Bounds.Y + (i / Columns) * ui.P(104), w, ui.P(94));
-    Draw.Fill(g, r, ui.P(14), Theme.Surface); Draw.Stroke(g, r, ui.P(14), Theme.Line);
-    var circle = new Rectangle(r.X + ui.P(14), r.Y + ui.P(14), ui.P(26), ui.P(26));
-    Draw.Fill(g, circle, ui.P(13), Theme.A(t.Color, 40)); Draw.Glyph(g, t.Glyph, 9.5f, circle, t.Color);
-    Draw.Line(g, t.Value, Theme.F(Theme.Display, 17), new Rectangle(r.X + ui.P(14), r.Y + ui.P(44), w - ui.P(20), ui.P(28)), Theme.Ink);
-    Draw.Line(g, t.Label, Theme.F(Theme.Sans, 8.5f), new Rectangle(r.X + ui.P(14), r.Y + ui.P(70), w - ui.P(20), ui.P(16)), Theme.Muted);
+    var t = Tiles[i]; int col = i % Columns; var r = new Rectangle(Bounds.X + col * w, Bounds.Y + (i / Columns) * ui.P(64), w, ui.P(56));
+    if (col > 0) using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, r.X, r.Y + ui.P(6), r.X, r.Bottom - ui.P(6));
+    int pad = col > 0 ? ui.P(18) : 0;
+    Draw.Line(g, t.Value, Theme.F(Theme.Display, 18), new Rectangle(r.X + pad, r.Y, w - pad - ui.P(8), ui.P(32)), Theme.Ink);
+    Draw.Line(g, t.Label, Theme.F(Theme.Sans, 8.5f), new Rectangle(r.X + pad, r.Y + ui.P(34), w - pad - ui.P(8), ui.P(18)), Theme.Muted);
    }
   }
  }
- // Day bar: label, rounded track, value and a note.
+ // Day bar: label, thin track, value and a note.
  public sealed class BarEl : El {
   public string Label = "", Value = "", Note = ""; public double Fraction; public Color Color = Theme.Accent, NoteColor = Theme.Muted;
   public BarEl() { Before = 0; }
-  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(40)); return Bounds.Height; }
+  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(38)); return Bounds.Height; }
   public override void Paint(Graphics g, Ui ui, El hover) {
-   if (Hot(hover)) Draw.Fill(g, Bounds, ui.P(10), Theme.Hover);
+   if (Hot(hover)) Draw.Fill(g, Bounds, ui.P(6), Theme.Hover);
    int cy = Bounds.Y + Bounds.Height / 2, labelW = ui.P(78), valueW = ui.P(54), noteW = ui.P(110);
    Draw.Line(g, Label, Theme.F(Theme.Sans, 9.5f), new Rectangle(Bounds.X + ui.P(14), Bounds.Y, labelW, Bounds.Height), Theme.Soft);
-   var track = new Rectangle(Bounds.X + ui.P(14) + labelW, cy - ui.P(4), Bounds.Width - labelW - valueW - noteW - ui.P(44), ui.P(8));
-   Draw.Fill(g, track, ui.P(4), Theme.Raised);
-   if (Fraction > 0) Draw.Fill(g, new Rectangle(track.X, track.Y, Math.Max(track.Height, (int)(track.Width * Math.Min(1, Fraction))), track.Height), ui.P(4), Color);
+   var track = new Rectangle(Bounds.X + ui.P(14) + labelW, cy - ui.P(2), Bounds.Width - labelW - valueW - noteW - ui.P(44), ui.P(4));
+   Draw.Fill(g, track, ui.P(2), Theme.Raised);
+   if (Fraction > 0) Draw.Fill(g, new Rectangle(track.X, track.Y, Math.Max(track.Height, (int)(track.Width * Math.Min(1, Fraction))), track.Height), ui.P(2), Color);
    Draw.Line(g, Value, Theme.F(Theme.SansBold, 9.5f), new Rectangle(track.Right + ui.P(12), Bounds.Y, valueW, Bounds.Height), Theme.Ink, true);
    Draw.Line(g, Note, Theme.F(Theme.Sans, 9), new Rectangle(Bounds.Right - noteW - ui.P(10), Bounds.Y, noteW, Bounds.Height), NoteColor, true);
   }
  }
+ // Text-only buttons: the primary one is light on dark, the rest are quiet outlines.
  public sealed class ButtonEl : El {
   public string Text = "", Glyph = ""; public bool Primary; public bool Small;
-  public int Measure(Graphics g, Ui ui) { return Draw.Width(g, Text, Theme.F(Theme.SansBold, Small ? 8.5f : 9.5f)) + ui.P(Small ? 22 : 34) + (Glyph.Length > 0 ? ui.P(22) : 0); }
-  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(Small ? 30 : 36)); return Bounds.Height; }
+  Font Font { get { return Theme.F(Theme.SansBold, Small ? 8.5f : 9); } }
+  public int Measure(Graphics g, Ui ui) { return Draw.Width(g, Text, Font) + ui.P(Small ? 20 : 28); }
+  public override int Layout(Graphics g, Ui ui, int x, int y, int width) { Bounds = new Rectangle(x, y, width, ui.P(Small ? 28 : 32)); return Bounds.Height; }
   public override void Paint(Graphics g, Ui ui, El hover) {
    bool hot = Hot(hover);
-   if (Primary) Draw.Fill(g, Bounds, ui.P(9), hot ? Theme.Mix(Theme.Accent, Color.White, .12f) : Theme.Accent);
-   else { Draw.Fill(g, Bounds, ui.P(9), hot ? Theme.Hover : Theme.Raised); Draw.Stroke(g, Bounds, ui.P(9), Theme.Line); }
-   Color ink = Primary ? Theme.Bg : Theme.Ink; var font = Theme.F(Theme.SansBold, Small ? 8.5f : 9.5f);
-   int textW = Draw.Width(g, Text, font), glyphW = Glyph.Length > 0 ? ui.P(22) : 0, start = Bounds.X + (Bounds.Width - textW - glyphW) / 2;
-   if (glyphW > 0) Draw.Glyph(g, Glyph, Small ? 8.5f : 9.5f, new Rectangle(start, Bounds.Y, ui.P(16), Bounds.Height), ink);
-   Draw.Line(g, Text, font, new Rectangle(start + glyphW, Bounds.Y, textW + ui.P(4), Bounds.Height), ink);
+   if (Primary) Draw.Fill(g, Bounds, ui.P(6), hot ? Color.White : Theme.Ink);
+   else { if (hot) Draw.Fill(g, Bounds, ui.P(6), Theme.Hover); Draw.Stroke(g, Bounds, ui.P(6), Theme.Line); }
+   TextRenderer.DrawText(g, Text, Font, Bounds, Primary ? Theme.Bg : Theme.Ink, Draw.Base | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
   }
  }
  public sealed class ButtonsEl : El {
@@ -285,7 +280,7 @@ namespace MeuClaudeWidget {
   public Padding Inset; public bool TopLine;
   public Canvas(Ui ui) {
    this.ui = ui; SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-   BackColor = Theme.Bg; Inset = new Padding(ui.P(24), ui.P(22), ui.P(24), ui.P(24));
+   BackColor = Theme.Bg; Inset = new Padding(ui.P(28), ui.P(26), ui.P(28), ui.P(28));
   }
   public void SetItems(IEnumerable<El> list) { items = list.ToList(); dirty = true; hover = null; Invalidate(); if (mouse.X >= 0 && IsHandleCreated) BeginInvoke(new Action(() => Track(mouse))); }
   IEnumerable<El> All(IEnumerable<El> list) { foreach (var e in list) { yield return e; foreach (var c in All(e.Children)) yield return c; } }
@@ -301,6 +296,10 @@ namespace MeuClaudeWidget {
   protected override void OnPaint(PaintEventArgs e) {
    var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(BackColor);
    if (dirty) LayoutAll(g);
+   if (reveal != null) {
+    var r = reveal.Bounds; reveal = null;
+    if (r.Top < offset) offset = Math.Max(0, r.Top - ui.P(8)); else if (r.Bottom > offset + ClientSize.Height) offset = Math.Min(Math.Max(0, content - ClientSize.Height), r.Bottom - ClientSize.Height + ui.P(8));
+   }
    if (TopLine) using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 0, 0, Width, 0);
    var state = g.Save(); g.TranslateTransform(0, -offset);
    foreach (var item in items) if (item.Bounds.Bottom >= offset && item.Bounds.Top <= offset + Height) item.Paint(g, ui, hover);
@@ -312,7 +311,7 @@ namespace MeuClaudeWidget {
   }
   El HitTest(Point p) {
    var at = new Point(p.X, p.Y + offset); El found = null;
-   foreach (var e in All(items)) if ((e.Click != null || e.DoubleClick != null || e.Tip != null) && e.Bounds.Contains(at)) found = e;
+   foreach (var e in All(items)) if ((e.Click != null || e.DoubleClick != null || e.Menu != null || e.Tip != null) && e.Bounds.Contains(at)) found = e;
    return found;
   }
   void Track(Point p) {
@@ -325,7 +324,15 @@ namespace MeuClaudeWidget {
   }
   protected override void OnMouseMove(MouseEventArgs e) { mouse = e.Location; Track(e.Location); base.OnMouseMove(e); }
   protected override void OnMouseLeave(EventArgs e) { mouse = new Point(-1, -1); if (hover != null) { hover = null; Invalidate(); } base.OnMouseLeave(e); }
-  protected override void OnMouseClick(MouseEventArgs e) { var hit = HitTest(e.Location); if (e.Button == MouseButtons.Left && hit != null && hit.Click != null) hit.Click(); base.OnMouseClick(e); }
+  protected override void OnMouseClick(MouseEventArgs e) {
+   var hit = HitTest(e.Location);
+   if (e.Button == MouseButtons.Left && hit != null && hit.Click != null) hit.Click();
+   else if (e.Button == MouseButtons.Right && hit != null && hit.Menu != null) hit.Menu(PointToScreen(e.Location));
+   base.OnMouseClick(e);
+  }
+  // Scrolls so that the element is visible (after the next layout).
+  El reveal; public void Reveal(El e) { reveal = e; Invalidate(); }
+  public void ScrollTop() { offset = 0; Invalidate(); }
   protected override void OnMouseDoubleClick(MouseEventArgs e) { var hit = HitTest(e.Location); if (hit != null && hit.DoubleClick != null) hit.DoubleClick(); base.OnMouseDoubleClick(e); }
   protected override void OnMouseWheel(MouseEventArgs e) {
    int max = Math.Max(0, content - ClientSize.Height);
@@ -343,8 +350,8 @@ namespace MeuClaudeWidget {
    FormBorderStyle = FormBorderStyle.Sizable; StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; KeyPreview = true;
    ui = new Ui(DeviceDpi / 96f); Font = Theme.F(Theme.Sans, 9.5f);
    ClientSize = new Size(ui.P(width), ui.P(height)); MinimumSize = new Size(ui.P(width * 0.8f), ui.P(380));
-   Footer = new Canvas(ui) { Dock = DockStyle.Bottom, Height = ui.P(68), TopLine = true };
-   Footer.Inset = new Padding(ui.P(24), ui.P(16), ui.P(24), ui.P(16)); Controls.Add(Footer);
+   Footer = new Canvas(ui) { Dock = DockStyle.Bottom, Height = ui.P(60), TopLine = true };
+   Footer.Inset = new Padding(ui.P(28), ui.P(14), ui.P(28), ui.P(14)); Controls.Add(Footer);
    Body = new Canvas(ui) { Dock = DockStyle.Fill }; Controls.Add(Body); Body.BringToFront();
    KeyDown += delegate(object s, KeyEventArgs e) { if (e.KeyCode == Keys.Escape) Close(); };
   }
@@ -367,7 +374,7 @@ namespace MeuClaudeWidget {
   protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
    if (!e.Item.Selected || !e.Item.Enabled) return;
    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-   Draw.Fill(e.Graphics, new Rectangle(3, 1, e.Item.Width - 6, e.Item.Height - 2), 6, Theme.Hover);
+   Draw.Fill(e.Graphics, new Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2), 4, Theme.Hover);
   }
   protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
    var r = new Rectangle(e.ImageRectangle.X - 2, e.ImageRectangle.Y - 2, e.ImageRectangle.Width + 4, e.ImageRectangle.Height + 4);

@@ -119,10 +119,14 @@ namespace MeuClaudeWidget {
  }
 
  // Short chimes synthesized in memory (no sound files): "done" rises two notes, "needs you" is a brighter three-note arpeggio.
+ // Played through the mixer (Som) a little higher or lower each time; SoundPlayer is the fallback without audio mixing.
  public static class Chime {
-  static byte[] done, waiting; static SoundPlayer player; // kept alive while playing
+  static readonly Dictionary<string, byte[]> cache = new Dictionary<string, byte[]>(); static SoundPlayer player; // kept alive while playing
+  static readonly Random dice = new Random();
   struct Note { public double Freq, Start, Decay; public Note(double f, double s, double d) { Freq = f; Start = s; Decay = d; } }
-  static byte[] Synth(double seconds, double peak, params Note[] notes) {
+  static byte[] Synth(double seconds, double peak, params Note[] notes) { return Synth(seconds, peak, 1, notes); }
+  static byte[] Synth(double seconds, double peak, double pitch, Note[] notes) {
+   notes = notes.Select(n => new Note(n.Freq * pitch, n.Start, n.Decay)).ToArray();
    const int rate = 44100; int count = (int)(rate * seconds); var mix = new double[count];
    foreach (var n in notes) {
     int start = (int)(n.Start * rate);
@@ -148,12 +152,27 @@ namespace MeuClaudeWidget {
    }
   }
   // Peaks around a third of full scale: clearly audible, not startling.
-  public static byte[] DoneSound { get { return done ?? (done = Synth(1.1, 0.30, new Note(783.99, 0, 0.42), new Note(1046.5, 0.13, 0.55))); } }
-  public static byte[] WaitingSound { get { return waiting ?? (waiting = Synth(1.0, 0.34, new Note(659.25, 0, 0.26), new Note(830.61, 0.1, 0.26), new Note(987.77, 0.2, 0.45), new Note(1318.5, 0.2, 0.3))); } }
+  public static byte[] DoneSound { get { return Sound(false, 0); } }
+  public static byte[] WaitingSound { get { return Sound(true, 0); } }
+  // step: -2..2 quarter-tones around the original pitch.
+  static byte[] Sound(bool needsYou, int step) {
+   string key = (needsYou ? "w" : "d") + step; byte[] wav;
+   lock (cache) {
+    if (!cache.TryGetValue(key, out wav)) {
+     double pitch = Math.Pow(2, step * 0.5 / 12);
+     wav = needsYou ? Synth(1.0, 0.34, pitch, new[] { new Note(659.25, 0, 0.26), new Note(830.61, 0.1, 0.26), new Note(987.77, 0.2, 0.45), new Note(1318.5, 0.2, 0.3) })
+                    : Synth(1.1, 0.30, pitch, new[] { new Note(783.99, 0, 0.42), new Note(1046.5, 0.13, 0.55) });
+     cache[key] = wav;
+    }
+   }
+   return wav;
+  }
   public static void Play(bool needsYou) {
    try {
+    byte[] wav = Sound(needsYou, dice.Next(5) - 2);
+    if (Som.Wav(wav)) return;
     if (player != null) player.Dispose();
-    player = new SoundPlayer(new MemoryStream(needsYou ? WaitingSound : DoneSound)); player.Play();
+    player = new SoundPlayer(new MemoryStream(wav)); player.Play();
    } catch { }
   }
  }

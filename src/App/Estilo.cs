@@ -113,6 +113,7 @@ namespace MeuClaudeWidget {
   // A1: usage pill as a tube of liquid: level color, two waves on the surface, a few bubbles and a glassy top.
   Color LevelColor(double value) { return value < 60 ? Color.FromArgb(78,206,186) : value < 85 ? amber : red; }
   void PaintPill(Graphics g, Rectangle pill, double? value, Color color, float radius) {
+   if (UseSkia && PaintPillSkia(g, pill, value, color, radius)) return;
    using (var shape = Rounded(pill, radius)) {
     using (var background = new SolidBrush(Color.FromArgb(48,50,53))) g.FillPath(background, shape);
     var saved = g.Save(); g.SetClip(shape, CombineMode.Intersect);
@@ -173,6 +174,7 @@ namespace MeuClaudeWidget {
   // amber while it waited for you, faint when idle, dimmer for what is still ahead, and a glowing "now".
   void PaintDayLine(Graphics g) {
    if (!settings.DayLine || preview) return;
+   if (UseSkia && PaintDayLineSkia(g)) return;
    DateTime now = DateTime.Now, today = now.Date;
    int left = Px(12), right = StripWidth - Px(12), gap = Px(7);
    var segments = WorkDay.Windows.Select(w => new[] { (int)w[0].TotalMinutes, (int)w[1].TotalMinutes }).ToList();
@@ -221,6 +223,7 @@ namespace MeuClaudeWidget {
    ringLevel = level;
   }
   void PaintTaskRing(Graphics g, PointF c, float r, double f) {
+   if (UseSkia && PaintTaskRingSkia(g, c, r, f)) return;
    var mode = g.SmoothingMode; g.SmoothingMode = SmoothingMode.AntiAlias;
    Color color = TaskColor(f); float thick = Math.Max(2f, Px(2.6f));
    double t = settings.Animations && !Night ? MotionTime.Now / 1000.0 : 0;

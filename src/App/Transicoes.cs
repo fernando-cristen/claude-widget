@@ -74,7 +74,8 @@
   readonly BoundsMotion boundsMotion=new BoundsMotion();
   readonly StripMotion stripMotion=new StripMotion();
   Bitmap retiringTask; string taskImageKey; int stripPaintWidth; bool compactBoundsReady;
-  bool SmoothStrip { get { return settings.Animations && settings.Compact && !preview && !stopped && Visible; } }
+  bool SmoothStrip { get { return settings.Animations && settings.Compact && (!preview || TestMotion) && !stopped && Visible; } }
+  internal static bool TestMotion; // ligada apenas pelo teste de transições
   int StripWidth { get { return stripPaintWidth>0?stripPaintWidth:Width; } }
   int CompactWidth { get { return compactBoundsReady && boundsMotion.Active(MotionTime.Now)?boundsMotion.Target.Width:Width; } }
   double? VisualUsage(int index,Bucket bucket) { return stripPaintWidth>0?usageMotion[index].Value(MotionTime.Now):bucket.Percent; }
