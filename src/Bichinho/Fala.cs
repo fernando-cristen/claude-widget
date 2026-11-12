@@ -1,4 +1,4 @@
-namespace MeuClaudeWidget {
+﻿namespace MeuClaudeWidget {
  using System;
  using System.Collections.Generic;
  using System.Drawing;
@@ -12,11 +12,13 @@ namespace MeuClaudeWidget {
   readonly HashSet<string> saidToday = new HashSet<string>(); string saidDay = "";
   readonly Random talk = new Random();
 
-  void Say(string text, bool important = false) {
-   if (!settings.Speech || preview || String.IsNullOrEmpty(text)) return;
+  void Say(string text, bool important = false, double seconds = 0) {
+   if ((!settings.Speech && seconds <= 0) || preview || String.IsNullOrEmpty(text)) return;
    if (!important && (DateTime.Now - lastSpeech).TotalSeconds < 6) return;
+   if (!important && ChatActive) return; // an answer from a chat is not covered by small talk
    speech = text; speechAt = DateTime.Now; lastSpeech = speechAt;
-   speechFor = Math.Max(2.8, Math.Min(6, 1.4 + text.Length * 0.07));
+   if (important) Som.Chirp("talk");
+   speechFor = seconds > 0 ? seconds : Math.Max(2.8, Math.Min(6, 1.4 + text.Length * 0.07));
   }
   bool Speaking { get { double e = (DateTime.Now - speechAt).TotalSeconds; return settings.Speech && speech.Length > 0 && e >= 0 && e < speechFor; } }
   string Pick(params string[] options) { return options[talk.Next(options.Length)]; }
@@ -49,36 +51,39 @@ namespace MeuClaudeWidget {
     if (after >= 0 && after < 2) { saidToday.Add(line.Value); Say(line.Value, true); }
    }
   }
-  // The bubble: up and to the right of the head, with a little tail pointing at it.
+  // The bubble: up and to the right of the head, with a little tail pointing at it. Long lines wrap
+  // (answers from a chat); while the chat waits for Claude it shows an animated "hmm…".
   void PaintSpeech(Graphics g, PointF head, float crown, int width) {
-   if (!Speaking || head.IsEmpty) return;
-   double e = (DateTime.Now - speechAt).TotalSeconds;
-   float pop = (float)MotionTime.Ease(Math.Min(1, e / 0.18)), fade = (float)Math.Min(1, (speechFor - e) / 0.35);
+   if (head.IsEmpty || (!Speaking && !chatBusy)) return;
+   double e = chatBusy ? 1 : (DateTime.Now - speechAt).TotalSeconds;
+   float pop = (float)MotionTime.Ease(Math.Min(1, e / 0.18)), fade = chatBusy ? 1 : (float)Math.Min(1, (speechFor - e) / 0.35);
+   string text = chatBusy ? "hmm" + new string('.', 1 + (int)(MotionTime.Now / 400) % 3) : speech;
    float sf = ScaleFactor; var font = Theme.F(Theme.Sans, 8.5f);
-   SizeF size = g.MeasureString(speech, font);
-   float pad = 7 * sf, bw = Math.Min(width - 8 * sf, size.Width + pad * 2), bh = size.Height + pad * 1.1f;
-   float bx = Math.Max(4 * sf, Math.Min(width - bw - 4 * sf, head.X + 12 * sf)), by = Math.Max(2 * sf, crown - 8 * sf - bh);
+   float pad = 7 * sf, maxText = Math.Min(width - 16 * sf, 230 * sf);
+   SizeF size = g.MeasureString(chatBusy ? "hmm..." : text, font, (int)maxText);
+   float bw = Math.Min(width - 8 * sf, size.Width + pad * 2), bh = size.Height + pad * 1.1f;
+   float bx = Math.Max(4 * sf, Math.Min(width - bw - 4 * sf, head.X + 12 * sf - (bh > 40 * sf ? bw / 2 : 0))), by = Math.Max(2 * sf, crown - 8 * sf - bh);
    var state = g.Save();
    var tip = new PointF(Math.Max(bx + 8 * sf, Math.Min(bx + bw - 8 * sf, head.X + 6 * sf)), by + bh + 6 * sf);
    g.TranslateTransform(tip.X, tip.Y); g.ScaleTransform(.6f + .4f * pop, .6f + .4f * pop); g.TranslateTransform(-tip.X, -tip.Y);
    int a = (int)(250 * Math.Max(0, fade));
-   using (var path = Rounded(new RectangleF(bx, by, bw, bh), bh / 2.4f)) {
+   using (var path = Rounded(new RectangleF(bx, by, bw, bh), Math.Min(bh / 2.4f, 12 * sf))) {
     using (var tail = new GraphicsPath()) {
      tail.AddPolygon(new[] { new PointF(tip.X - 5 * sf, by + bh - 1), new PointF(tip.X + 4 * sf, by + bh - 1), tip });
      using (var fill = new SolidBrush(Color.FromArgb(a, 248, 246, 242))) { g.FillPath(fill, path); g.FillPath(fill, tail); }
     }
     using (var edge = new Pen(Color.FromArgb(a / 4, 0, 0, 0), 1f)) g.DrawPath(edge, path);
    }
-   using (var f = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap })
-   using (var ink2 = new SolidBrush(Color.FromArgb(a, 44, 40, 38))) g.DrawString(speech, font, ink2, new RectangleF(bx + pad / 2, by, bw - pad, bh), f);
+   using (var f = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter })
+   using (var ink2 = new SolidBrush(Color.FromArgb(a, 44, 40, 38))) g.DrawString(text, font, ink2, new RectangleF(bx + pad / 2, by, bw - pad, bh), f);
    g.Restore(state);
   }
 
-  // For the terminal status line: how the creature is, its level and its name.
+  // For the terminal status line: how the creature is and its name.
   string creatureFile = "";
   void WriteCreatureFile(bool force) {
    try {
-    var data = new Dictionary<string,object> { { "Mood", mood }, { "Level", CreatureLevel }, { "Name", settings.CreatureName ?? "" }, { "Night", NightIdle }, { "Shape", Shape } };
+    var data = new Dictionary<string,object> { { "Mood", mood }, { "Name", settings.CreatureName ?? "" }, { "Night", NightIdle }, { "Shape", Shape } };
     string json = Data.Json().Serialize(data);
     if (!force && json == creatureFile) return;
     creatureFile = json;

@@ -13,7 +13,6 @@
    new Trophy { Id = "t25", Title = "25 tarefas finalizadas", Kind = "cup", Tint = Color.FromArgb(196, 204, 214) },
    new Trophy { Id = "t50", Title = "50 tarefas finalizadas", Kind = "cup", Tint = Color.FromArgb(246, 200, 70) },
    new Trophy { Id = "streak3", Title = "3 semanas sem rejeição", Kind = "medal", Tint = Color.FromArgb(246, 200, 70) },
-   new Trophy { Id = "lv10", Title = "Nível 10", Kind = "crown", Tint = Color.FromArgb(246, 200, 70) },
    new Trophy { Id = "friday", Title = "Sexta com tudo finalizado", Kind = "star", Tint = Color.FromArgb(250, 214, 90) }
   };
   DateTime trophyAt = DateTime.MinValue; string trophyTitle = "", trophyId = "";
@@ -25,7 +24,6 @@
     case "t25": return settings.CreatureXp >= 25;
     case "t50": return settings.CreatureXp >= 50;
     case "streak3": return Streak >= 3;
-    case "lv10": return CreatureLevel >= 10;
     // Friday after 17:00: something was finished today and nothing is left in progress.
     case "friday": return n.DayOfWeek == DayOfWeek.Friday && n.Hour >= 17 && settings.LastFinishedDay == today && tasks.Count == 0;
    }

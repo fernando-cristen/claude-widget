@@ -1,4 +1,4 @@
-﻿namespace MeuClaudeWidget {
+namespace MeuClaudeWidget {
  using System;
  using System.Collections.Generic;
  using System.Drawing;
@@ -15,7 +15,7 @@
   const int WS_EX_LAYERED = 0x80000, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x8000000;
   const int WM_WINDOWPOSCHANGING = 0x46, WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3, SWP_NOZORDER = 0x4, GWL_HWNDPARENT = -8;
   static readonly IntPtr HWND_BOTTOM = new IntPtr(1), HWND_TOPMOST = new IntPtr(-1);
-  public Action<Point> Poke, OpenMenu; public Action DragStart, Dragging, DragEnd;
+  public Action<Point> Poke, OpenMenu, Chat; public Action DragStart, Dragging, DragEnd;
   public bool Floating { get; private set; }
   // Brings the window over the others (games, visits) or sends it back behind them.
   public void SetFloating(bool on) {
@@ -49,6 +49,7 @@
    Location = new Point(Cursor.Position.X - grab.X, Cursor.Position.Y - grab.Y);
    if (Dragging != null) Dragging();
   }
+  protected override void OnMouseDoubleClick(MouseEventArgs e) { base.OnMouseDoubleClick(e); if (e.Button == MouseButtons.Left && Chat != null) Chat(e.Location); }
   protected override void OnMouseUp(MouseEventArgs e) {
    base.OnMouseUp(e);
    if (e.Button == MouseButtons.Right) { if (OpenMenu != null) OpenMenu(Cursor.Position); return; }
@@ -98,13 +99,13 @@
   DeskPet deskPet; Timer deskTimer; Bitmap deskFrame;
   Point dragLast; DateTime deskNightAt = DateTime.MinValue; bool deskWasNight; PointF captionSpot;
   int DeskW { get { return (int)Math.Round(320 * ScaleFactor); } }
-  int DeskH { get { return (int)Math.Round(214 * ScaleFactor); } }
+  int DeskH { get { return (int)Math.Round(250 * ScaleFactor); } }
   float DeskPx { get { return ScaleFactor * desk.Zoom * 2.45f; } }
-  int DeskTop { get { return (int)Math.Round(44 * ScaleFactor); } }
+  int DeskTop { get { return (int)Math.Round(80 * ScaleFactor); } } // room above the head for a wrapped speech bubble
   // Where the feet touch the floor inside the home window.
   float DeskGround { get { return DeskTop + (float)Math.Round(9.5f * ScaleFactor * desk.Zoom) + 10 * DeskPx; } }
   // Something moving on the desktop that needs the full frame rate.
-  bool DeskFx { get { DateTime n = DateTime.Now; return Away || game.Length > 0 || visitor != null || desk.Held || (n - desk.LandAt).TotalSeconds < 1 || Speaking || (n - deskNightAt).TotalSeconds < 3.6; } }
+  bool DeskFx { get { DateTime n = DateTime.Now; return Away || game.Length > 0 || visitor != null || ChatActive || desk.Held || (n - desk.LandAt).TotalSeconds < 1 || Speaking || (n - deskNightAt).TotalSeconds < 3.6; } }
 
   void InitDesk() {
    if (preview) return;
@@ -132,14 +133,16 @@
     deskPet.Location = DeskHome();
     deskPet.Poke = p => { if (GameClick(p)) { DeskTick(); return; } current = desk; try { PokeCreature(p); } finally { current = null; } DeskTick(); };
     deskPet.OpenMenu = p => menu.Show(p);
+    deskPet.Chat = p => { if (!desk.Creature.IsEmpty && desk.Creature.Contains(p)) OpenChat(); };
     deskPet.DragStart = delegate { desk.Held = true; dragLast = deskPet.Location; deskTimer.Interval = 16; };
     deskPet.Dragging = delegate { int dx = deskPet.Left - dragLast.X; dragLast = deskPet.Location; desk.Swing = Math.Max(-3f, Math.Min(3f, desk.Swing * .6f - dx / (6f * ScaleFactor))); };
-    deskPet.DragEnd = delegate { desk.Held = false; desk.Swing = 0; desk.LandAt = DateTime.Now; settings.DeskX = deskPet.Left; settings.DeskY = deskPet.Top; TrySave(); };
+    deskPet.DragEnd = delegate { desk.Held = false; desk.Swing = 0; desk.LandAt = DateTime.Now; Som.Chirp("land"); settings.DeskX = deskPet.Left; settings.DeskY = deskPet.Top; TrySave(); };
     deskPet.Show(); DeskTick(); deskTimer.Start();
    } else if (!want && deskPet != null) { deskTimer.Stop(); CloseDesk(); }
   }
   // The saved spot if it is still on a screen; otherwise the bottom right corner of the main screen.
   Point DeskHome() {
+   if (!settings.DeskTall && settings.DeskX != Int32.MinValue) { settings.DeskY -= (int)Math.Round(36 * ScaleFactor); settings.DeskTall = true; TrySave(); }
    var saved = new Rectangle(settings.DeskX, settings.DeskY, DeskW, DeskH);
    if (settings.DeskX != Int32.MinValue) foreach (var s in Screen.AllScreens) if (s.WorkingArea.IntersectsWith(Rectangle.Inflate(saved, -DeskW / 3, -DeskH / 3))) return saved.Location;
    var area = Screen.PrimaryScreen.WorkingArea;
@@ -151,7 +154,7 @@
    desk.Swing *= .85f;
    RoamTick(); GameTick(); VisitTick();
    // While a game or a visit is on, the home comes to the front (only its drawing takes clicks); then back behind.
-   deskPet.SetFloating(game.Length > 0 || visitor != null);
+   deskPet.SetFloating(game.Length > 0 || visitor != null || ChatActive);
    // Hidden behind a window: only a slow heartbeat, no painting (the name tag is always opaque, so it is the probe).
    bool seen = captionSpot.IsEmpty || desk.Held || deskPet.Floating || deskPet.VisibleAt(deskPet.PointToScreen(Point.Round(captionSpot)));
    bool still = !settings.Animations || (Night && !SessionBusy && !CreatureFx && !DeskFx);
@@ -357,6 +360,11 @@
     using (var shadow = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) g.FillEllipse(shadow, x - 5 * px, ground - .6f * px, 10 * px, 1.4f * px);
     g.SmoothingMode = SmoothingMode.None;
     Color body = waiting ? amber : FamilyTints[seed % FamilyTints.Length], shade = Color.FromArgb(body.R * 3 / 4, body.G * 3 / 4, body.B * 3 / 4), dark = Color.FromArgb(28, 26, 30);
+    if (Style3D) {
+     PaintMini3D(g, x, ground - lift * px, 12 * px, body, cheer ? "cheer" : waiting ? "waiting" : walking ? "walk" : s.State == "working" ? "work" : "idle", t, i);
+     if (waiting && ((int)(t * 3)) % 2 == 0) using (var b = new SolidBrush(amber)) g.DrawString("!", Theme.F(Theme.SansBold, 9f), b, x - 3 * Sf, ground - 17 * px);
+     continue;
+    }
     var p = new Pix(g, ox, oy, px);
     try {
      for (int r = 0; r < CreatureBody.Length; r++) for (int c = 0; c < 12; c++) if (CreatureBody[r][c] == '#') p.Dot(c, r, r == 7 ? shade : body);

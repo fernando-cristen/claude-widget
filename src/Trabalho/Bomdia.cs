@@ -227,7 +227,7 @@ namespace MeuClaudeWidget {
    if (b.Sessions.Count == 0) items.Add(new CardEl { Pad = 16 }.Add(new TextEl { Text = "Nenhuma sessão do Claude Code registrada desde " + day + ".", Color = Theme.Muted }));
    foreach (var s in b.Sessions) {
     var card = new CardEl { Pad = 6, Dividers = false };
-    card.Add(new RowEl { Glyph = Theme.Terminal, GlyphColor = s.Open ? Theme.Green : Theme.Muted, Title = s.Project, Subtitle = s.Open ? "Sessão aberta" : "Sessão encerrada", Before = 0,
+    card.Add(new RowEl { Title = s.Project, Subtitle = s.Open ? "Sessão aberta" : "Sessão encerrada", Before = 0,
      Chip = s.Issue > 0 ? "#" + s.Issue : "", ChipColor = Theme.Accent, Right = s.Last.ToLocalTime().ToString("dd/MM HH:mm") });
     if (s.Asked.Length > 0) card.Add(new QuoteEl { Label = "Você pediu", Text = Recap.Clean(s.Asked, 240), Color = Theme.Accent, Inset = 14, Before = 2 });
     card.Add(new QuoteEl { Label = "Claude", Text = s.Answered.Length > 0 ? s.Answered : s.Asked.Length > 0 ? "Não chegou a responder esse pedido." : "Transcript não encontrado.", Color = Theme.Blue, TextColor = Theme.Soft, Inset = 14 });
@@ -247,7 +247,7 @@ namespace MeuClaudeWidget {
    else if (b.Tasks.Count == 0) tasks.Add(new TextEl { Text = "Nenhum apontamento nesse dia.", Color = Theme.Muted, Inset = 10, Before = 0 });
    foreach (var t in b.Tasks) {
     string url = t.Url;
-    tasks.Add(new RowEl { Glyph = Theme.Code, GlyphColor = Theme.ForStatus(t.Status), Title = "#" + t.Id + "  " + t.Subject, Subtitle = t.Hours > 0 ? WorkDay.Duration(t.Hours) + " apontadas" : "sem horas nesse dia",
+    tasks.Add(new RowEl { Title = "#" + t.Id + "  " + t.Subject, Subtitle = t.Hours > 0 ? WorkDay.Duration(t.Hours) + " apontadas" : "sem horas nesse dia",
      Chip = t.Status, ChipColor = Theme.ForStatus(t.Status), Click = () => open(url) });
    }
    items.Add(tasks);

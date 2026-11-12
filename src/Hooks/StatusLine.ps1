@@ -73,7 +73,6 @@ function Get-Creature([string]$id) {
         }
         $label = $face
         if ($pet.Name) { $label += ' ' + $pet.Name }
-        if ($pet.Level) { $label += ' nv' + $pet.Level }
         return $label
     } catch { return '' }
 }

@@ -43,7 +43,7 @@
      if (roamState == "jumpUp" && !TargetAlive()) { GoDown(); break; }
      if (k >= 1) {
       if (roamState == "jumpUp") { roamState = "perch"; roamUntil = DateTime.Now.AddSeconds(roamCall ? 300 : 40 + wander.Next(40)); Say(roamCall ? "Psiu! Tem sessão te esperando." : Pick("Posso sentar aqui?", "Que vista!", "Vim te visitar!"), true); }
-      else { roamState = "land"; roam.LandAt = DateTime.Now; roamT0 = Clock; roamDur = 0.9; }
+      else { roamState = "land"; roam.LandAt = DateTime.Now; Som.Chirp("land"); roamT0 = Clock; roamDur = 0.9; }
      }
      break;
     case "perch":
@@ -138,7 +138,7 @@
    roamFeet = new PointF(roamPet.Left + RoamW / 2f, roamPet.Top + RoamFeetY);
    PointF home = HomeFeet;
    if (roamFeet.Y < home.Y - 4) { roamState = "fall"; roamA = roamFeet; roamB = new PointF(roamFeet.X, home.Y); roamT0 = Clock; roamDur = Math.Max(0.25, Math.Sqrt((home.Y - roamFeet.Y) / (1400 * ScaleFactor))); }
-   else { roamState = "land"; roam.LandAt = DateTime.Now; roamT0 = Clock; roamDur = 0.9; }
+   else { roamState = "land"; roam.LandAt = DateTime.Now; Som.Chirp("land"); roamT0 = Clock; roamDur = 0.9; }
   }
   void EndRoam() {
    roamState = "home"; roamWin = IntPtr.Zero; roam.Pose = ""; roam.Walking = false; roam.Held = false;

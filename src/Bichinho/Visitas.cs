@@ -1,4 +1,4 @@
-namespace MeuClaudeWidget {
+﻿namespace MeuClaudeWidget {
  using System;
  using System.Collections.Generic;
  using System.Drawing;
@@ -71,6 +71,8 @@ namespace MeuClaudeWidget {
    using (var shadow = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) g.FillEllipse(shadow, x - 5 * px, ground - .6f * px, 10 * px, 1.4f * px);
    g.SmoothingMode = SmoothingMode.None;
    Color body = visitor.Tint, shade = Color.FromArgb(body.R * 3 / 4, body.G * 3 / 4, body.B * 3 / 4), dark = Color.FromArgb(28, 26, 30);
+   if (Style3D) PaintMini3D(g, x, oy + 10 * px, 12 * px, body, dancing ? "cheer" : "walk", t, 7);
+   else {
    var p = new Pix(g, ox, oy, px);
    try {
     for (int r = 0; r < CreatureBody.Length; r++) for (int c = 0; c < 12; c++) if (CreatureBody[r][c] == '#') p.Dot(c, r, r == 7 ? shade : body);
@@ -81,6 +83,7 @@ namespace MeuClaudeWidget {
     if (dancing) { bool up = ((int)(t * 4)) % 2 == 0; p.Dot(-1, up ? 1 : 4, shade); p.Dot(12, up ? 4 : 1, shade); }
     else { p.Dot(-1, step ? 5 : 6, shade); p.Dot(12, step ? 6 : 5, shade); }
    } finally { p.Dispose(); }
+   }
    g.SmoothingMode = SmoothingMode.AntiAlias;
    // While dancing: a little flag with the issue number and the name over the head.
    if (dancing) {

@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Meu Claude: widget para Windows 11. Compilação: dotnet build; pacote final: Compilar.cmd (dotnet publish). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- UI Automation (UIAutomationClient) vem junto com o WPF; usada para achar o espaço livre na barra de tarefas. -->
+    <UseWPF>true</UseWPF>
+    <AssemblyName>MeuClaude</AssemblyName>
+    <RootNamespace>MeuClaudeWidget</RootNamespace>
+    <ApplicationIcon>src\App\icone.ico</ApplicationIcon>
+    <ApplicationManifest>src\App\app.manifest</ApplicationManifest>
+    <!-- Mesmo comportamento de DPI do antigo host (powershell.exe): ciente do DPI do sistema. -->
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>4.2.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Product>Meu Claude</Product>
+    <AssemblyTitle>Meu Claude · widget de uso</AssemblyTitle>
+    <NeutralLanguage>pt-BR</NeutralLanguage>
+    <!-- Publicação: um único .exe autocontido, sem precisar instalar o .NET. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <!-- Avisos de APIs antigas (ServicePointManager etc.) não travam a compilação. -->
+    <NoWarn>$(NoWarn);SYSLIB0014;SYSLIB0051;CA1416;CS0105;CS8933</NoWarn>
+  </PropertyGroup>
+
+  <!-- Antes, todos os .cs eram concatenados e Widget.cs trazia os usings. Hoje cada arquivo é compilado
+       separadamente, então os mesmos usings valem globalmente. -->
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Collections" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.Drawing" />
+    <Using Include="System.Drawing.Drawing2D" />
+    <Using Include="System.Globalization" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Net" />
+    <Using Include="System.Net.Http" />
+    <Using Include="System.Reflection" />
+    <Using Include="System.Security.Cryptography" />
+    <Using Include="System.Runtime.InteropServices" />
+    <Using Include="System.Text" />
+    <Using Include="System.Threading.Tasks" />
+    <Using Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**;dist\**" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- Bichinho 3D na placa de vídeo (Direct3D 11), desenho da faixa com Skia e sons com mixagem. -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- Scripts que o Claude Code executa; o .exe grava cópias em %LOCALAPPDATA%MeuClaudeWidget ao ativar o radar. -->
+    <EmbeddedResource Include="src/Hooks/*.ps1" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

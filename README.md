@@ -3,15 +3,63 @@
 <img width="513" height="48" alt="image" src="https://github.com/user-attachments/assets/f621504e-8ff0-41ca-b04a-5a6c861e71b1" />
 
 
-ATIVAR O NOVO RADAR (UMA VEZ)
-1. Feche o widget antigo e extraia TODOS os arquivos deste pacote.
-2. Abra Ativar-Radar.cmd, sem executar como administrador.
-3. Reabra suas sessões do Claude Code no Windows e envie uma mensagem.
-4. Abra Abrir-Widget.cmd. Seu login e preferências anteriores continuam salvos.
+NOVIDADES DA 4.2
+• Central de sessões (clique no projeto na faixa, ou menu › "Sessões e
+  histórico"): todas as conversas do Claude Code deste computador, por
+  projeto, com as abertas no topo e o estado ao vivo de cada uma.
+  Duplo clique vai para o terminal (se aberta) ou retoma a conversa numa
+  aba nova do Windows Terminal. Botão direito: nova sessão no projeto,
+  abrir a atividade no Redmine, copiar o comando, abrir a pasta, fixar
+  projeto no topo. Setas e Enter funcionam; Ctrl+F busca; Esc limpa.
+• Busca no histórico: no que você pediu, nos títulos, projetos e branches,
+  e por atividade: "473854" ou "#473854" acha as conversas em que você
+  colou o link dessa atividade, e palavras do título da atividade também
+  encontram. "Com atividade" lista só as conversas vinculadas ao Redmine.
+  O índice fica em %LOCALAPPDATA%\MeuClaudeWidget\historico.json e guarda só
+  as suas mensagens, nunca as respostas nem a saída de ferramentas.
+• Visual das janelas refeito: sem ícones em bolhas coloridas, sem caixa
+  alta, cinzas neutros, um único acento e botões discretos.
 
-O arquivo Ativar-Radar.cmd adiciona hooks locais ao settings.json do Claude
-Code do usuário. Faz backup antes de escrever e preserva outros hooks,
-permissões e configurações. Reexecutá-lo não duplica esta integração.
+NOVIDADES DA 4.1
+• Bichinho 3D na placa de vídeo: o mesmo mochi, agora desenhado por Direct3D
+  com 4x de suavização, em 1 a 3 ms por quadro (antes 5 a 30 ms na CPU).
+  Se não houver GPU (área de trabalho remota, máquina virtual), volta para a
+  CPU sozinho. Menu › Visual da faixa › "Bichinho 3D na placa de vídeo".
+• Faixa desenhada com Skia: as pílulas de líquido, a linha do dia e o anel
+  da tarefa ganharam antialiasing e gradientes de verdade, gastando menos
+  CPU. Texto e bichinho pixel art continuam nativos. Menu › Visual da faixa
+  › "Desenho da faixa com Skia".
+• Som de verdade: os avisos passam por um mixer (não se cortam mais) e saem
+  num tom levemente diferente a cada vez. O bichinho ganhou barulhinhos:
+  risadinha quando cutucado, resmungo quando acordado, "tum" ao pousar,
+  bocejo, assobio e um murmúrio quando fala algo
+  importante. Menu › "Barulhinhos do bichinho" desliga só esses.
+• Atualização automática: o widget confere as versões publicadas no GitHub
+  (a cada 6 h, e no menu "Atualizações" › "Procurar agora"). Quando há uma
+  nova, baixa o MeuClaude.exe, avisa, e troca o arquivo ao reiniciar.
+  "Não" pula aquela versão; a busca automática pode ser desligada.
+• Pixel art redesenhada para ler de relance: contorno escuro em volta de
+  tudo, olhos maiores com brilho, braços de verdade (2 a 4 pixels), boca
+  em todos os estados e um emote ao lado da cabeça (coração quando termina,
+  gota de suor quando erra ou espera, "…" num comando demorado, raiva quando
+  acordado). Trabalhando ele digita num laptop; quando o Claude está lendo
+  código ou pesquisando, segura um livro. Um só acessório na cabeça por vez.
+• Sem níveis: saíram o "★ Nível N!", a antena, a capa, a gravata e a coroa.
+  As tarefas finalizadas continuam contando para os troféus.
+• O bichinho reage ao que o Claude está fazendo: um comando demorado no
+  terminal e ele senta e fica batendo o pé; várias edições seguidas e ele
+  corre de um lado para o outro; uma permissão ou pergunta pendente e ele
+  olha para você e aponta para o lado em que está o terminal.
+
+ATIVAR O RADAR (UMA VEZ)
+1. Abra MeuClaude.exe. Na primeira abertura ele pergunta se quer ativar o
+   radar; responda Sim. Depois, o menu (botão direito na faixa) tem
+   "Radar do Claude Code" › "Ativar ou atualizar o radar".
+2. Reabra suas sessões do Claude Code no Windows e envie uma mensagem.
+
+Ativar o radar adiciona hooks locais ao settings.json do Claude Code do
+usuário. O widget faz backup antes de escrever e preserva outros hooks,
+permissões e configurações. Ativar de novo não duplica esta integração.
 Se você usa CLAUDE_CONFIG_DIR, ative a integração no mesmo ambiente/pasta
 de configuração do Claude. Políticas que desativam hooks são respeitadas.
 Não requer instalar extensão, Python, Node ou outro aplicativo.
@@ -62,9 +110,9 @@ Branch e horário do último commit ficam nos detalhes do projeto.
 Os nomes de arquivos, diffs e conteúdo de conversas não são enviados a ninguém.
 
 DESATIVAR / DADOS LOCAIS
-Execute Remover-Radar.cmd e reabra o Claude Code. Só os hooks deste radar
-são removidos; os demais permanecem. É criado um backup da configuração.
-O script do hook fica em %LOCALAPPDATA%\MeuClaudeWidget\RadarHook.ps1.
+No menu, "Radar do Claude Code" › "Remover o radar", e reabra o Claude Code.
+Só os hooks deste radar são removidos; os demais permanecem. É criado um
+backup da configuração. O script do hook fica em %LOCALAPPDATA%\MeuClaudeWidget\RadarHook.ps1.
 Os eventos ficam na subpasta radar. Contêm identificador derivado da sessão,
 pasta do projeto, estado, evento, nome da ferramenta e horário. Não gravam
 prompts, respostas, comandos executados, entradas/saídas de ferramentas,
@@ -75,7 +123,7 @@ Esta integração é para Claude Code NATIVO DO WINDOWS; não inclui WSL/SSH.
 ATUALIZAR A VERSÃO QUE JÁ FUNCIONA
 1. Feche o widget antigo pelo × ou pelo menu Sair junto ao relógio.
 2. Extraia este ZIP e substitua os arquivos da pasta anterior.
-3. Abra Abrir-Widget.cmd novamente.
+3. Abra MeuClaude.exe.
 O login já salvo em LocalAppData é reaproveitado. Não apague essa pasta.
 O modo de exibição e a posição que você salvou são reaproveitados.
 Se aparecer “já está aberto”, o widget antigo ainda precisa ser fechado.
@@ -105,15 +153,14 @@ A opção de alinhamento automático usa a tela principal; você pode arrastar
 para outra tela. Mantenha “por cima das outras janelas” ativado para a faixa.
 
 COMEÇAR DO ZERO
-1. Extraia a pasta inteira do ZIP para uma pasta sua.
-2. Dê dois cliques em Abrir-Widget.cmd.
+1. Coloque MeuClaude.exe numa pasta sua.
+2. Dê dois cliques nele.
 3. Na configuração, escolha a origem do login e clique em Salvar e conectar.
 
-Não requer instalar Python, Node, extensão ou aplicativo de terceiros.
-Usa Windows PowerShell 5.1, Windows Forms e .NET Framework do Windows 11.
+Não requer instalar Python, Node, .NET, extensão ou aplicativo de terceiros:
+MeuClaude.exe é um único arquivo autocontido (.NET 8, Windows Forms).
 O resumo de mudanças usa o Git para Windows, se já instalado.
-Não execute como administrador. Não abra os arquivos de dentro do ZIP.
-Na primeira abertura, a compilação em memória pode demorar alguns segundos.
+Não execute como administrador.
 
 OPÇÃO A — CLAUDE NO NAVEGADOR OU APP
 Mesmo que você use o app desktop, entre na mesma conta pelo navegador:
@@ -158,10 +205,9 @@ USAR O WIDGET
 • Uma segunda abertura avisa que o widget já está funcionando.
 
 ABRIR JUNTO COM O WINDOWS (OPCIONAL)
-1. Crie um atalho de Abrir-Widget.cmd.
-2. Pressione Win+R, digite shell:startup e confirme.
-3. Coloque somente o atalho nessa pasta. Remova-o para desativar.
-Não mude de lugar a pasta do widget depois de criar o atalho.
+Marque "Iniciar com o Windows" no menu (botão direito na faixa). O widget
+cria um atalho para o .exe na pasta de inicialização do seu usuário;
+desmarque para removê-lo. Se mover o .exe de lugar, desmarque e marque de novo.
 
 APONTAMENTO AUTOMÁTICO NO REDMINE
 De segunda a sexta, às 17:55, se houver tarefa atribuída a você em
@@ -214,7 +260,8 @@ O widget grava as horas uma vez por minuto em
 e horas das tarefas; sem chave). A barra de status lê o transcript da sessão
 só no seu computador, apenas a parte nova a cada vez, e guarda somente o
 número da tarefa no registro da sessão. Depois de atualizar o widget,
-rode Ativar-Radar.cmd de novo para instalar a barra de status nova.
+use "Radar do Claude Code" › "Ativar ou atualizar o radar" para instalar a
+barra de status nova.
 
 COMEMORAÇÃO DE TAREFA FINALIZADA
 A cada 5 min o widget confere as SUAS tarefas (as que têm apontamento seu
@@ -314,9 +361,6 @@ VISUAL DA FAIXA
 • Rotina: espreguiça às 08:00, toma café até 08:30, come a marmita das 12:00
   às 13:00 e tira um cochilo até 13:12; "sextou" na sexta depois das 17h e
   touca de dormir à noite.
-• Níveis: cada tarefa finalizada no Redmine dá XP. Ao subir de nível o título
-  mostra "★ Nível N!" e ele ganha acessórios que ficam: antena (3), capa (5),
-  gravata-borboleta (7) e coroa (10).
 • Família comemora junto quando uma sessão termina, e o bichinho aponta para
   a sessão que está esperando você.
 • Erro: quando um comando do Claude falha, uma nuvenzinha solta um raio nele.
@@ -331,7 +375,7 @@ VISUAL DA FAIXA
   pro caracol (sexta à tarde) e, à noite, aponta a estrela cadente e pula
   atrás dos vagalumes.
   Menu › "Visual da faixa" › "Testar" dispara qualquer um na hora (e também
-  subir de nível, raio, comemoração, redemoinho e tontura).
+  raio, comemoração, redemoinho e tontura).
 • Bichinho na área de trabalho: o mesmo bichinho, quase 3x maior, solto na
   área de trabalho como os gadgets do Windows 7 (sem fundo, sempre atrás
   das janelas), com o nome do projeto e o estado embaixo. Arraste para
@@ -354,16 +398,20 @@ VISUAL DA FAIXA
 • À noite ele vai pra caminha (touca, coberta, abajur que apaga) e acorda
   às 08:00 espreguiçando.
 • No push sai um aviãozinho de papel do bichinho.
-• Troféus: 10, 25 e 50 tarefas finalizadas, 3 semanas sem rejeição, nível
-  10 e sexta com tudo finalizado. Os que faltam aparecem apagadinhos.
+• Troféus: 10, 25 e 50 tarefas finalizadas, 3 semanas sem rejeição
+  e sexta com tudo finalizado. Os que faltam aparecem apagadinhos.
 • Clima com cenário: poça na chuva (ele pula nela), neve acumulando na
   cabeça, picolé no calor.
 • Falas: frases curtas num balãozinho ao lado dele ("Editando o código…",
   "Terminei!", "Bora almoçar?", "Sextou!"). Dá pra desligar.
 • Personalizar: menu › Visual da faixa › Personalizar bichinho (nome,
-  formato: redondinho, gatinho, fantasminha ou robozinho; e cor).
+  estilo, formato: redondinho, gatinho, fantasminha ou robozinho; e cor).
+• Estilo: pixel art (padrão) ou 3D. O 3D é um bichinho tipo "mochi" com
+  luz e sombra de verdade, olhos brilhantes e contorno fininho, desenhado
+  por um pequeno motor 3D próprio. Faz tudo o que o pixel art faz; chapéus,
+  acessórios e os formatos especiais por enquanto só existem no pixel art.
 • No terminal: a status line do Claude Code começa com o bichinho em
-  caracteres, com o humor da sessão, o nome e o nível:
+  caracteres, com o humor da sessão e o nome:
   (•_•)⌨ trabalhando · (°o°)! esperando · \(^o^)/ concluído · (-.-)zZ dormindo.
 • Música: com o Spotify tocando, ele põe fone, dança no ritmo (balança a
   cabeça enquanto trabalha), solta notinhas e a plaquinha alterna entre a
@@ -394,6 +442,15 @@ VISUAL DA FAIXA
 • Deixe o mouse parado bem ao lado dele: ele estica a mãozinha tentando
   tocar no cursor.
 • Animações a ~60 quadros por segundo (usa um pouco mais de CPU: ~1,5%).
+• Conversar com ele: dois cliques no bichinho (na casinha ou na faixa) ou
+  menu › Conversar com o bichinho. Aparece uma linha de texto logo abaixo
+  dele; Enter envia, Esc fecha. Ele coça a cabeça pensando ("hmm…") e
+  responde num balão. Quem responde é o próprio Claude Code (claude -p,
+  modelo Haiku, na sua assinatura), no papel do bichinho, com o contexto do
+  momento (hora, tarefa, sessão, clima, música) e lembrando da conversa por
+  30 minutos. Pode perguntar do seu Redmine ("o que tenho em andamento?"):
+  ele usa o servidor MCP do Redmine do mcp-config.json e é instruído a só
+  consultar, nunca alterar. Cada resposta leva uns 10 segundos.
 • Com o bichinho ligado, o título mostra só o projeto: o estado está nele.
 Menu › "Visual da faixa" liga/desliga cada um (todos ligados por padrão).
 
@@ -418,9 +475,12 @@ Automation do próprio Windows, só para medir o espaço livre.
 PRIVACIDADE E FUNCIONAMENTO
 Código próprio em src/ (veja ESTRUTURA DO PROJETO no fim deste guia)
 e Ui.cs (o kit visual das janelas: barra de título escura do Windows 11, ícones
-Segoe Fluent, fonte Segoe UI Variable). scripts/Iniciar.ps1 compila tudo em memória.
-Ativar-Radar.cmd é a única etapa que altera a configuração do Claude Code.
-Não baixa pacotes, não instala serviços, não altera o registro e não envia
+Segoe Fluent, fonte Segoe UI Variable). dotnet publish gera MeuClaude.exe a partir de src/.
+Ativar o radar é a única ação que altera a configuração do Claude Code.
+A busca de atualização (desligável em Atualizações) consulta api.github.com e
+baixa apenas o MeuClaude.exe publicado nas versões do projeto; o arquivo é
+conferido (tamanho e cabeçalho) antes de ser usado.
+Não instala serviços, não altera o registro e não envia
 telemetria. Usa requisições GET HTTPS para dados de uso, sem gerar mensagens.
 Destinos de rede programados:
 • https://claude.ai/api/organizations
@@ -469,31 +529,46 @@ Uma janela sempre por cima não se sobrepõe à tela de bloqueio, UAC nem a
 todos os jogos em tela cheia exclusiva.
 
 TESTE LOCAL OPCIONAL
-Abra Testar-Widget.cmd. Ele compila o mesmo código e verifica tratamento
+Rode "MeuClaude.exe --selftest". O autoteste verifica tratamento
 de zero, valores ausentes, limites por modelo, datas, respostas inválidas,
 valores numéricos, proteção DPAPI e interpretação de dados Git. Não lê a conta nem faz requisições.
-Testar-Radar.cmd verifica os hooks e a instalação/remoção em pasta
-temporária, sem tocar na sua configuração real do Claude.
+tests\Testar-Radar.ps1 compila e verifica os hooks e a ativação/remoção pelo
+.exe em pasta temporária, sem tocar na sua configuração real do Claude.
+tests\Testar-Transicoes.ps1 compila e roda o teste de animação da faixa
+(MeuClaude.exe --testar-transicoes), que compara quadros pixel a pixel.
+"MeuClaude.exe --testar-3d <pasta>" grava o bichinho 3D renderizado pela GPU e
+pela CPU lado a lado, com os tempos, e toca os sons pelo mixer.
 Os testes não validam conexão real, aparência ou comportamento de DPI.
 Em caso de erro ao abrir, copie a mensagem da janela (sem suas chaves).
 
 REMOVER
-Execute Remover-Radar.cmd primeiro. Feche o widget. Apague a pasta extraída e, se existir, o atalho de inicialização.
+No menu, remova o radar e desmarque "Iniciar com o Windows". Feche o widget. Apague o MeuClaude.exe.
 Apague %LOCALAPPDATA%\MeuClaudeWidget para remover as preferências e a
 chave protegida. Desconectar também remove a chave da configuração, mas
 não revoga a sessão no Claude. Encerrar sessões é feito na própria conta.
 
 ESTRUTURA DO PROJETO
-Abrir-Widget.cmd        — abre o widget (dois cliques)
-Ativar-Radar.cmd        — liga a integração com o Claude Code
-Remover-Radar.cmd       — desliga a integração (com backup)
-Testar-Widget.cmd       — autoteste local
-Testar-Radar.cmd        — teste dos hooks em pasta isolada
+MeuClaude.csproj        — o projeto .NET 8 / Windows Forms; "dotnet publish -c Release -o dist"
+                          gera dist\MeuClaude.exe (precisa do SDK do .NET 8:
+                          winget install Microsoft.DotNet.SDK.8)
 README.md / LEIA-ME.txt — este guia
 
-src/                    — código C# (compilado junto, em memória)
+PUBLICAR UMA VERSÃO (para a atualização automática)
+1. Suba o número em <Version> no MeuClaude.csproj (ex.: 4.2.0).
+2. dotnet publish -c Release -o dist
+3. Crie uma release no GitHub com a tag v4.2.0 e anexe dist\MeuClaude.exe
+   com exatamente esse nome. Os widgets instalados encontram a versão nova
+   em até 6 horas, ou na hora por Atualizações › Procurar agora.
+
+src/                    — código C# (um projeto .NET 8; usings globais no .csproj)
   App/                  — a janela e a faixa
-    Widget.cs             formulário principal, menu, configurações
+    Widget.cs             formulário principal, menu, configurações, Main
+    Central.cs            central de sessões e busca no histórico
+    Json.cs               JSON (System.Text.Json com as formas do antigo serializador)
+    FaixaSkia.cs          pílulas, linha do dia e anel desenhados com SkiaSharp
+    Som.cs                mixer de som (NAudio) e os barulhinhos do bichinho
+    Atualizacao.cs        atualização automática pelas versões do GitHub
+    icone.ico, app.manifest  ícone e manifesto do .exe
     Ui.cs, Telas.cs       kit visual e telas (painel, placar, bom dia)
     Taskbar.cs            encaixe na barra de tarefas
     Transicoes.cs, Vida.cs, Estilo.cs   animações, sons e visual da faixa
@@ -504,15 +579,20 @@ src/                    — código C# (compilado junto, em memória)
     Passeio.cs            passeios pelas janelas e física de arrastar
     Jogos.cs, Brincar.cs  brincadeiras, bolinha e música
     Trofeus.cs, Fala.cs   estante de troféus e falas
+    Bicho3D.cs, Estilo3D.cs  motor 3D e o estilo 3D do bichinho
+    Bicho3DGpu.cs         o mesmo motor 3D em Direct3D 11 (shaders em HLSL)
+    Reacoes.cs            reações ao que o Claude está fazendo (comando, edições, espera)
+    Conversa.cs           conversar com o bichinho (Claude Code headless)
     Visitas.cs            visitas dos colegas (Redmine)
   Trabalho/             — dados do trabalho
     Radar.cs              sessões do Claude Code e Git
+    Historico.cs          índice das conversas (transcritos do Claude Code) e atividades
+    Integracao.cs         ativa e remove o radar no settings.json do Claude Code
     Redmine.cs            apontamento automático e horas da tarefa
     Placar.cs, Bomdia.cs  placar da semana e resumo da manhã
-scripts/                — PowerShell
-  Iniciar.ps1             compila src/ e abre o widget (DLL em cache)
-  Integracao-Radar.ps1    instala/remove os hooks no Claude Code
-  RadarHook.ps1           recebe os eventos das sessões
-  StatusLine.ps1          barra de status do Claude Code
+  Testes/               — teste de transições embutido (--testar-transicoes)
+  Hooks/                — scripts embutidos no .exe e gravados em %LOCALAPPDATA%\MeuClaudeWidget
+    RadarHook.ps1           recebe os eventos das sessões
+    StatusLine.ps1          barra de status do Claude Code
 tests/                  — testes locais
   Testar-Radar.ps1, Testar-Transicoes.ps1
